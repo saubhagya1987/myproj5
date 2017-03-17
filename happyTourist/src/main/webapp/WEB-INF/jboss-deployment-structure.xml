@@ -1,0 +1,22 @@
+<?xml  version="1.0" encoding="UTF-8"?>
+<jboss-deployment-structure>
+	<deployment>
+		<exclude-subsystems>
+			<subsystem name="jpa" />
+		</exclude-subsystems>
+		<dependencies>
+			<module name="com.happyTourist.configuration" slot="main" />
+		</dependencies>
+
+		<exclusions>
+			<module name="org.hibernate" />
+			<module name="org.jboss.logging" />
+			<module name="org.apache.log4j" />
+			<module name="org.apache.commons.logging" />
+			<module name="javaee.api" />
+		</exclusions>
+		<!-- <exclusions> do not use JBOSS hibernate jars <module name="org.hibernate" 
+			/> <module name="org.apache.log4j" /> <module name="org.apache.commons.logging" 
+			/> </exclusions> -->
+	</deployment>
+</jboss-deployment-structure>

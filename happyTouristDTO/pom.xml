@@ -1,0 +1,57 @@
+<project xmlns="http://maven.apache.org/POM/4.0.0" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 http://maven.apache.org/xsd/maven-4.0.0.xsd">
+  <modelVersion>4.0.0</modelVersion>
+  <groupId>com.ireslab</groupId>
+  <artifactId>happyTouristDTO</artifactId>
+  <version>0.0.1-SNAPSHOT</version>
+  
+  <properties>		
+		<spring.framework.version>4.2.0.RELEASE</spring.framework.version>
+		<com.happyTourist.version>0.0.1-SNAPSHOT</com.happyTourist.version>	
+		<slf4j.version>1.7.12</slf4j.version>		
+		<fasterxml.jackson.version>2.6.3</fasterxml.jackson.version>
+		<codehaus.jackson.version>1.9.12</codehaus.jackson.version>		
+		<commons.version>3.4</commons.version>
+		<gson.version>2.6.2</gson.version>
+	</properties>
+	
+<dependencies> 
+  <dependency>
+	<groupId>org.springframework</groupId>
+	<artifactId>spring-context</artifactId>
+	<version>${spring.framework.version}</version>
+	<scope>provided</scope>
+  </dependency>
+  <dependency>
+		<groupId>com.fasterxml.jackson.core</groupId>
+		<artifactId>jackson-databind</artifactId>
+		<version>2.6.3</version>
+  </dependency>
+  		<!--Mongo DB Dependencies  -->		
+		<dependency>
+		    <groupId>org.mongodb</groupId>
+		    <artifactId>mongo-java-driver</artifactId>
+		    <version>3.2.0</version>
+		</dependency>
+		
+		<dependency>
+			<groupId>org.springframework.data</groupId>
+			<artifactId>spring-data-mongodb</artifactId>
+			<version>1.8.2.RELEASE</version>
+		</dependency>
+</dependencies>
+  
+  
+  <build>
+    
+    <plugins>
+      <plugin>
+        <artifactId>maven-compiler-plugin</artifactId>
+        <version>3.1</version>
+        <configuration>
+          <source>1.8</source>
+          <target>1.8</target>
+        </configuration>
+      </plugin>
+    </plugins>
+  </build>
+</project>

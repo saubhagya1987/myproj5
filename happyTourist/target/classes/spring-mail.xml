@@ -1,0 +1,92 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<beans xmlns="http://www.springframework.org/schema/beans"
+	xmlns:context="http://www.springframework.org/schema/context" xmlns:p="http://www.springframework.org/schema/p"
+	xmlns:mvc="http://www.springframework.org/schema/mvc" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+	xsi:schemaLocation="http://www.springframework.org/schema/beans
+http://www.springframework.org/schema/beans/spring-beans-4.0.xsd
+http://www.springframework.org/schema/context
+http://www.springframework.org/schema/context/spring-context-4.0.xsd
+http://www.springframework.org/schema/mvc
+http://www.springframework.org/schema/mvc/spring-mvc-4.0.xsd">
+
+	<context:annotation-config />
+	<context:component-scan base-package="org.ireslab.notification" />
+	<bean
+		class="org.springframework.beans.factory.config.PropertyPlaceholderConfigurer">
+
+		<!-- <property name="location">
+			<value>classpath:mail_credentials.properties</value>
+		</property> -->
+<property name="locations">
+            <list>
+                <value>classpath:mail_and_sms_credentials.properties</value>
+                
+            </list>
+        </property>
+	</bean>
+
+	<bean id="mailSender" class="org.springframework.mail.javamail.JavaMailSenderImpl">
+
+		<property name="host" value="${host}" />
+		<property name="port" value="${port}" />
+		<property name="username" value="${email.username}" />
+		<property name="password" value="${email.password}" />
+
+		<property name="javaMailProperties">
+			<props>
+				<!-- <prop key="mail.transport.protocol">smtp</prop> -->
+				<prop key="mail.smtp.auth">${mail.smtp.auth}</prop>
+				<prop key="mail.smtp.starttls.enable">${mail.smtp.starttls.enable}</prop>
+				<prop key="mail.debug">${mail.debug}</prop>
+				<prop key="mail.smtp.socketFactory.class">${mail.smtp.socketFactory.class}</prop>
+			</props>
+		</property>
+
+	</bean>
+
+	<bean id="velocityEngine"
+		class="org.springframework.ui.velocity.VelocityEngineFactoryBean">
+		<property name="velocityProperties">
+			<value>
+				resource.loader=class
+				class.resource.loader.class=org.apache.velocity.runtime.resource.loader.ClasspathResourceLoader
+			</value>
+		</property>
+	</bean>
+
+	<bean id="mailConfig" class="org.ireslab.notification.bean.MailConfig">
+
+		<property name="fromMailId" value="${fromMailId}" />
+
+		<!-- <property name="ccMailId" value="${ccMailId}" /> <property name="bccMailId" 
+			value="${bccMailId}" /> -->
+
+		<!-- <property name="ccMailList"> <array> <value>Jasbeer.Narula@ireslab.com</value> 
+			<value>Ashish.Sharma@ireslab.com</value> <value>ajay.purushothaman@ireslab.com</value> 
+			</array> </property> -->
+
+		<!-- <property name="bccMailList"> <array> <value>Jasbeer.Narula@ireslab.com</value> 
+			<value>ajay.purushothaman@ireslab.com</value> </array> </property> -->
+
+	</bean>
+
+
+	<!-- <bean id="messageSource"
+		class="org.springframework.context.support.ResourceBundleMessageSource">
+		<property name="basenames">
+			<list>
+				<value>sms_clickatell_credentials</value>
+				<value>sms_messages</value>
+			</list>
+		</property>
+	</bean> -->
+	<!-- <bean id="smsService" class="org.ireslab.notification.serviceimpl.Sms4bdServiceImpl">
+        <property name="smsbdUrl" value="${smsbdUrl}" />
+		<property name="publicKey" value="${publicKey}" />
+		<property name="privateKey" value="${privateKey}" />
+		<property name="sender" value="${sender}" />
+		<property name="delay" value="${delay}" />
+		<property name="type" value="${type}" />
+		
+		</bean> -->
+</beans>
