@@ -1,0 +1,59 @@
+import org.apache.logging.log4j.LogManager;
+import org.apache.logging.log4j.Logger;
+import org.quartz.JobExecutionContext;
+import org.quartz.Trigger;
+import org.quartz.Trigger.CompletedExecutionInstruction;
+import org.quartz.TriggerListener;
+import org.springframework.stereotype.Component;
+
+/**
+ * This class used to listen the TMBackgroundServices Trigger
+ * @author saubhagya.pradhan2
+ *
+ */
+@Component
+public class TriggerListner implements TriggerListener {
+
+	private static final Logger logger = LogManager.getLogger(JobsListener.class.getName());
+	
+    @Override
+    public String getName() {
+        return "globalTrigger";
+    }
+
+    /**
+	 * This method is used when any trigger is Fired	
+	 */
+    @Override
+    public void triggerFired(Trigger trigger, JobExecutionContext context) {
+    	logger.debug(trigger.getJobKey()+"TriggerListner.triggerFired() :+"+trigger.getStartTime());
+    }
+
+    /**
+	 * This method is used when any trigger is Fired with veto job execution	
+	 */
+    @Override
+    public boolean vetoJobExecution(Trigger trigger, JobExecutionContext context) {
+    	logger.debug(trigger.getJobKey()+"TriggerListner.vetoJobExecution() :+"+trigger.getStartTime());
+        return false;
+    }
+
+    /**
+   	 * This method is used when any trigger is misfired with veto job execution	
+   	 */
+    @Override
+    public void triggerMisfired(Trigger trigger) {
+    	logger.debug(trigger.getJobKey()+"TriggerListner.triggerMisfired() :+"+trigger.getStartTime());
+        String jobName = trigger.getJobKey().getName();
+        logger.debug("Job name: " + jobName + " is misfired");
+        
+    }
+
+    /**
+   	 * This method is used when any trigger completes its execution	
+   	 */
+    @Override
+    public void triggerComplete(Trigger trigger, JobExecutionContext context, CompletedExecutionInstruction triggerInstructionCode) {
+    	logger.debug(trigger.getJobKey()+"TriggerListner.triggerComplete()"+trigger.getEndTime());
+    }
+}
