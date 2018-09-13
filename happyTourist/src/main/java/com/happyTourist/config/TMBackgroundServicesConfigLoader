@@ -1,0 +1,1443 @@
+import java.io.File;
+import java.io.IOException;
+import java.net.URISyntaxException;
+import java.sql.SQLException;
+import java.time.LocalTime;
+import java.util.ArrayList;
+import java.util.Calendar;
+import java.util.Collections;
+import java.util.Date;
+import java.util.GregorianCalendar;
+import java.util.List;
+import java.util.Map;
+import java.util.Properties;
+import java.util.StringTokenizer;
+import java.util.concurrent.ThreadPoolExecutor;
+import java.util.concurrent.TimeUnit;
+
+import javax.annotation.PostConstruct;
+import javax.jms.JMSException;
+import javax.jms.Message;
+import javax.jms.ObjectMessage;
+
+import org.apache.logging.log4j.LogManager;
+import org.apache.logging.log4j.Logger;
+import org.quartz.JobKey;
+import org.quartz.Trigger;
+import org.quartz.TriggerKey;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.beans.factory.annotation.Value;
+import org.springframework.context.annotation.Lazy;
+import org.springframework.context.annotation.PropertySource;
+import org.springframework.context.annotation.PropertySources;
+import org.springframework.jms.annotation.JmsListener;
+import org.springframework.oxm.jaxb.Jaxb2Marshaller;
+import org.springframework.scheduling.TaskScheduler;
+import org.springframework.scheduling.quartz.SchedulerFactoryBean;
+import org.springframework.stereotype.Service;
+
+import com.fasterxml.jackson.databind.ObjectMapper;
+import com.proximus.tv.quartzscheduler.service.JobService;
+import com.proximus.tv.tmbackgroundservices.exception.BillingExportJobException;
+import com.proximus.tv.tmbackgroundservices.exception.CustomRuntimeException;
+import com.proximus.tv.tmbackgroundservices.exception.MessageQueueException;
+import com.proximus.tv.tmbackgroundservices.executor.ThreadPoolExecutorServiceImpl;
+import com.proximus.tv.tmbackgroundservices.executor.ThreadPoolMonitorServiceImpl;
+import com.proximus.tv.tmbackgroundservices.helpers.BillingExportJobFeature;
+import com.proximus.tv.tmbackgroundservices.helpers.BillingExportScheduleFeature;
+import com.proximus.tv.tmbackgroundservices.helpers.GlobalBrokerSettingFeature;
+import com.proximus.tv.tmbackgroundservices.helpers.TMTrigger;
+import com.proximus.tv.tmbackgroundservices.jobs.BillingExportJob;
+import com.proximus.tv.tmbackgroundservices.jobs.CleanDevicesProcess;
+import com.proximus.tv.tmbackgroundservices.jobs.DailyMassUpdateProcess;
+import com.proximus.tv.tmbackgroundservices.jobs.DeltaEPGCleanUpProcess;
+import com.proximus.tv.tmbackgroundservices.jobs.DynamicCategoryRuleProcess;
+import com.proximus.tv.tmbackgroundservices.jobs.GlobalBrokerGenerationProcess;
+import com.proximus.tv.tmbackgroundservices.jobs.MessageBrokerGenerationProcess;
+import com.proximus.tv.tmbackgroundservices.jobs.PCGProcessTimer;
+import com.proximus.tv.tmbackgroundservices.jobs.QoEConfigFileDistributionJob;
+import com.proximus.tv.tmbackgroundservices.jobs.SlidingWindowProcess;
+import com.proximus.tv.tmbackgroundservices.jobs.WebShowcase;
+import com.proximus.tv.tmbackgroundservices.repositories.BillingExportJobDao;
+import com.proximus.tv.tmbackgroundservices.repositories.CompanyServicesDao;
+import com.proximus.tv.tmbackgroundservices.repositories.GenericDao;
+import com.proximus.tv.tmbackgroundservices.service.TMJob;
+import com.proximus.tv.tmbackgroundservices.service.impl.GlobalBrokerExecutionJob;
+import com.proximus.tv.tmbackgroundservices.util.BillingExportUtil;
+import com.proximus.tv.tmbackgroundservices.util.CronUtil;
+import com.proximus.tv.tmbackgroundservices.util.QueueSenderUtils;
+
+/**
+ * @author saubhagya.pradhan2 This class is used to load the configuration
+ *         details related to Background Task
+ */
+@Service("backgroundServicesConfigLoader")
+@PropertySources({
+		@PropertySource(value = "${spring.config.location}/tmbackgroundservices.properties", ignoreResourceNotFound = true),
+		@PropertySource(value = "classpath:billingexport.properties") })
+public class TMBackgroundServicesConfigLoader {
+
+	/**
+	 * logger provides logging option to all child classes with level checked
+	 * enable options.
+	 */
+	private static final Logger logger = LogManager.getLogger(TMBackgroundServicesConfigLoader.class.getName());
+
+	String GROUP_KEY = "TMBackgroundService";
+
+	/** ONCE_PER_DAY */
+	private static final int ONCE_PER_DAY = 1;
+
+	/** CRON_TRIGGER_GLOBAL_BROKER_RESET_COUNTERS */
+	private static String cron_trigger_global_broker_set = "59 59 23 * * ?";
+
+	/** CRON_TRIGGER_GLOBAL_WEB_SHOWCASE_COUNTERS */
+	private static String cron_trigger_web_showcase_set = "59 59 23 * * ?";
+
+	/** CRON_TRIGGER_MESSAGE_BROKER_GENERATION */
+	private static String cron_trigger_message_broker_generation = "0 0 0 * * ?";
+
+	/** lastModified */
+	static long lastModified = 0;
+
+	/**
+	 * counter to check the sliding window process should run after server
+	 * startup
+	 */
+	Integer counter = 1;
+
+	/** marshaller */
+	Jaxb2Marshaller marshaller;
+
+	/**
+	 * threadPoolExecutorService
+	 */
+	@Autowired
+	ThreadPoolExecutorServiceImpl threadPoolExecutorService;
+
+	/**
+	 * ThreadPoolMonitorServiceImpl
+	 */
+	@Autowired
+	ThreadPoolMonitorServiceImpl threadPoolMonitorService;
+
+	/** executor */
+	ThreadPoolExecutor executor;
+
+	/**
+	 * Task Scheduler For Scheduling the jobs
+	 */
+	@Autowired
+	TaskScheduler taskScheduler;
+
+	/**
+	 * Generic Dao
+	 */
+	@Autowired
+	GenericDao genericDao;
+
+	/**
+	 * queueSenderUtils
+	 */
+	@Autowired
+	QueueSenderUtils queueSenderUtils;
+
+	/**
+	 * JobService
+	 */
+	@Autowired
+	@Lazy
+	JobService jobService;
+
+	/**
+	 * schedulerFactoryBean
+	 */
+	@Autowired
+	SchedulerFactoryBean schedulerFactoryBean;
+
+	/**
+	 * GlobalBrokerSettingFeature object for fetching the reference hour
+	 */
+	GlobalBrokerSettingFeature cGlobalBrokerSettingFeature = null;
+
+	/**
+	 * companyServicesDao
+	 */
+	@Autowired
+	CompanyServicesDao companyServicesDao;
+
+	/**
+	 * 
+	 */
+	@Autowired
+	BillingExportUtil billingExportUtil;
+
+	/**
+	 * Default Constructor
+	 */
+	public TMBackgroundServicesConfigLoader() {
+
+	}
+
+	/** tmCorePoolSize */
+	private static final String TM_CORE_POOL_SIZE = "tm.core.pool.size";
+
+	/** tmMaxPoolSize */
+	private static final String TM_MAX_POOL_SIZE = "tm.max.pool.size";
+
+	/** tmKeepAliveTime */
+	private static final String TM_KEEP_ALIVE_TIME = "tm.max.pool.size";
+
+	/** tmQueueCapaity */
+	private static final String TM_QUEUE_CAPACITY = "tm.queue.capacity";
+
+	/**
+	 * NPVRSlidingWindow
+	 */
+	private static final String NPVR_SLIDING_WINDOW = "NPVRSlidingWindow";
+
+	/**
+	 * GLOBAL_BROKER_EXECUTION_JOB
+	 */
+	private static final String GLOBAL_BROKER_EXECUTION_JOB = "GlobalBrokerExecutionJob";
+
+	/** TRIGGER */
+	private final String FORCE_PUBLISHED = "forcePublished";
+
+	/** WEB_SHOWCASE_EXECUTION_JOB */
+	private static final String WEB_SHOWCASE_EXECUTION_JOB = "WebShowcaseExecutionJob";
+	
+	/** DYNAMIC_CATEGORY_RULE_EXECUTION_JOB */
+	private static final String DYNAMIC_CATEGORY_RULE_EXECUTION_JOB = "DynCatRuleExecutionJob";
+	
+
+	/**
+	 * GLOBAL_INSTALL_DOCTYPE
+	 */
+	private static final String GLOBAL_INSTALL_DOCTYPE = "GlobalInstall";
+
+	/**
+	 * WEB_SHOWCASE_DOCTYPE
+	 */
+	private static final String WEB_SHOWCASE_DOCTYPE = "WebShowcase";
+	
+	
+	/**
+	 * DYNAMIC_CATEGORY_RULE_DOCTYPE
+	 */
+	private static final String DYNAMIC_CATEGORY_RULE_DOCTYPE = "DynamicCategoryRuleExecution";
+	
+	/**
+	 * DYNAMIC_CATEGORY_RULE_GROUP_KEY
+	 */
+	String DYNAMIC_CATEGORY_RULE_GROUP_KEY = "DynamicCategoryRuleGroup";
+
+	/**
+	 * MESSAGE_BROKER
+	 */
+	private static final String MESSAGE_BROKER = "MessageBroker";
+
+	/** MESSAGE_BROKER_JOB_TRIGGER_ID */
+	private static final Integer MESSAGE_BROKER_JOB_TRIGGER_ID = 23;
+
+	/**
+	 * SLIDING_WINDOW_GROUP_KEY
+	 */
+	String SLIDING_WINDOW_GROUP_KEY = "SlidingWindowGroup";
+
+	/**
+	 * PCG_PROCESS_GROUP_KEY
+	 */
+	String PCG_PROCESS_GROUP_KEY = "PCGProcessGroup";
+
+	/** SLIDING_WINDOW_DOCTYPE */
+	private static final String SLIDING_WINDOW_DOCTYPE = "SlidingWindow";
+
+	/** SLIDING_WINDOW_REC_MINS_JOB */
+	private static final String SLIDING_WINDOW_REC_MINS_JOB = "SlidingWindowRecMinutesJob";
+
+	/**
+	 * PCG_PROCESS_DOCTYPE
+	 */
+	private static final String PCG_PROCESS_DOCTYPE = "PCGProcess";
+
+	/**
+	 * DELTA_EPG_CLEANUP_PROCESS_JOB
+	 */
+	private static final String DELTA_EPG_CLEANUP_PROCESS_JOB = "DeltaEPGCleanUpProcessJob";
+
+	/**
+	 * CLEAN_DEVICES_PROCESS_JOB
+	 */
+	private static final String CLEAN_DEVICES_PROCESS_JOB = "CleanDevicesProcessJob";
+	
+
+	/**
+	 * QOE_CONFIG_FILE_DISTRIBUTION_JOB
+	 */
+	private static final String QOE_CONFIG_FILE_DISTRIBUTION_JOB = "QoEConfigFileDistributionJob";
+	
+	
+	 /** CRON_TRIGGER_DYN_CAT_RULE */
+    private static String CRON_TRIGGER_DYN_CAT_RULE = "0 15 0-23 * * ?"; 
+
+	/**
+	 * BILLING_EXPORT_JOB
+	 */
+	private static final String BILLING_EXPORT_JOB = "BillingExportJob";
+
+	/**
+	 * UPDATE
+	 */
+	private static final String UPDATE = "Update";
+
+	/**
+	 * CREATE
+	 */
+	private static final String CREATE = "Create";
+
+	/**
+	 * ACTIVATE
+	 */
+	private static final String ACTIVATE = "Activate";
+
+	/**
+	 * INACTIVATE
+	 */
+	private static final String INACTIVATE = "Inactivate";
+	/**
+	 * DAILY_MASS_UPDATE_JOB
+	 */	
+	private static final String DAILY_MASS_UPDATE_JOB = "DailyMassUpdateJob";
+
+	
+	/** MINUTE_TO_MILLIS */
+	final static long MINUTE_TO_MILLIS = 60 * 1000;
+
+	/** pollingInterval */
+	static long pollingInterval = 10;
+
+	/** polling */
+	static boolean polling;
+
+	/**
+	 * slidingWindow
+	 */
+	@Autowired
+	SlidingWindowProcess slidingWindow;
+
+	/**
+	 * pcgProcessTimer
+	 */
+	@Autowired
+	PCGProcessTimer pcgProcessTimer;
+	/**
+	 * billingExportJobDao
+	 */
+	@Autowired
+	BillingExportJobDao billingExportJobDao;
+
+	/**
+	 * Default delay value after which the previous delay value is changed
+	 */
+	Long newDelay = 0L;
+	/**
+	 * counter to skip first execution while the frequency is changed
+	 */
+	int mapCounter = 0;
+
+	/**
+	 * counter variable to check the frequency of Global Install
+	 */
+	String globalBrokerCounter = null;
+
+	/**
+	 * counter variable to check the frequency of Web showcase
+	 */
+	String webShowCaseCounter = null;
+
+	/**
+	 * ScheduledFuture Object to start to check the future activities
+	 */
+	// ScheduledFuture<?> future = null;
+
+	/**
+	 * ScheduledFuture Object for GlobalInstall to start to check the future
+	 * activities
+	 */
+	boolean scheduleCronJobs = false;
+
+	/**
+	 * ScheduledFuture Object for WebShowCase to start to check the future
+	 * activities
+	 */
+	boolean scheduleWebShowCaseCronJobs = false;
+
+	/**
+	 * ScheduledFuture Object for schedulePcgCronJobs to start to check the
+	 * future activities
+	 */
+	boolean schedulePcgCronJobs = false;
+	/**
+	 * slidingWindowProcess
+	 */
+	TMBackgroundServicesConfigLoader.slidingWindowProcess slidingWindowProcess = new TMBackgroundServicesConfigLoader.slidingWindowProcess();
+
+	/**
+	 * deltaEpg interval
+	 */
+	@Value("${deltaepg.cleanup.interval}")
+	private int deltaEpgInterval;
+
+	/**
+	 * deviceCleanupInterval
+	 */
+	@Value("${device.cleanup.interval}")
+	private int deviceCleanupInterval;
+	
+	/**
+	 * dailyMassTime
+	 */
+	@Value("${daily.mass.time}")
+	private String dailyMassTime;
+	
+	/**
+	 * dailyMassInterval
+	 */
+	@Value("${daily.mass.interval}")
+	private int dailyMassInterval;
+	
+	/**
+	 * qoe.interval
+	 */
+	@Value("${qoe.interval}")
+	private int qoeInterval;
+
+
+	private String TMBACKGROUND_SERVICES_VERSION_FILE = "TMBackgroundServices.version";
+
+	private String TMBACKGROUND_PROPERTIES_FILE = "billingexport.properties";
+
+	/** DOCUMENT ME! */
+	public static Properties versionProp = new Properties();
+
+	/**
+	 * Setter method for marshallar
+	 * 
+	 * @param marshaller
+	 */
+	public void setMarshaller(Jaxb2Marshaller marshaller) {
+		this.marshaller = marshaller;
+	}
+
+	/**
+	 * Method for initialization
+	 * 
+	 * @throws Exception
+	 */
+	public void init() throws Exception {
+		threadInitialize();
+		startTmConfigurationFileMonitor();
+
+		logger.debug(" Getting RMI Connection for UUSD : ");
+
+	}
+
+	/**
+	 * Method to start a Monitor thread to track changes on tmConfigurations.xml
+	 * file
+	 * 
+	 * @throws BillingExportJobException
+	 * @throws SQLException
+	 * @throws IOException
+	 * @throws URISyntaxException
+	 */
+	@PostConstruct
+	public void startTmConfigurationFileMonitor()
+			throws SQLException, BillingExportJobException, IOException, URISyntaxException {
+
+		// Getting TMBackgroundServices.version file
+		File versionFile = new File(System.getenv("JBOSS_HOME") + File.separator + "standalone/" + File.separator
+				+ TMBACKGROUND_SERVICES_VERSION_FILE);
+
+		billingExportUtil.loadVersion(versionFile.toString());
+		// Getting billingexport properties file
+		billingExportUtil.load(TMBACKGROUND_PROPERTIES_FILE);
+
+		// Created executor is set to ThreadPoolMonitorService...
+		threadPoolMonitorService.setExecutor(executor);
+		// ThreadPoolMonitorService is started...
+		Thread monitor = new Thread(threadPoolMonitorService, "MonitoringThread");
+		// starting the Thread pool
+		monitor.start();
+		// Calling the sliding window process to get the frequency at the time
+		// of server start up
+		slidingWindowProcess();
+		// Calling the pcgProcesss at the time of server start up
+		pcgProcess();
+		// Getting the global broker property value to form cron expression for
+		// Global Install
+		getBrokerGenerationSettingForScheduler(GLOBAL_INSTALL_DOCTYPE);
+		// Getting the global broker property value to form cron expression for
+		// Web Showcase
+		getBrokerGenerationSettingForScheduler(WEB_SHOWCASE_DOCTYPE);
+		// starting global install process
+		globalInstallProcess();
+		// starting web showcase process
+		webShowCaseProcess();
+		// Initialize Message Broker document
+		initialiseMessageBrokerGenerationJob();
+		// Initialize Delta EPG Cleanup Process
+		deltaEPGCleanUpProcess();
+		// Initialize session based devices cleanup Process
+		cleanUpSessionBasedDevices();
+		// Billing Export jobs
+		updateQrtzWithBillingExportJobData();
+		//Initialize DynamicCategoryRule Process
+		dynamicCategoryRuleProcess();
+		//Initialize Daily Mass Update
+		dailyMassUpdate();
+		//Initialize QoEConfigurationFileDistribution Job
+		initializeQoEConfigFileJob();
+	}
+
+	/**
+	 * Method to initialize QoE Config Files
+	 * 
+	 * @throws SQLException
+	 * @throws 
+	 */
+	private void initializeQoEConfigFileJob() {
+		logger.info("Initialize QoE Config File Distribution Job ");
+		
+		String repeatInterval = "*/1" ;
+		if (qoeInterval < 60) {
+			repeatInterval = "*/" + qoeInterval;
+		} else {
+			logger.debug("Setting default of 1 minute ");
+		}
+
+		String cronExp = "0 "+  repeatInterval + " * * * ?";
+
+		scheduleCronJobs = jobService.scheduleCronJob(QOE_CONFIG_FILE_DISTRIBUTION_JOB, QoEConfigFileDistributionJob.class, new Date(),
+				cronExp);
+	}
+
+	/**
+	 * Method to update Qrtz with BillingExport Jobs Data
+	 * 
+	 * @throws SQLException
+	 * @throws BillingExportJobException
+	 */
+	private void updateQrtzWithBillingExportJobData() throws SQLException, BillingExportJobException {
+		logger.debug("Updating Quartz tables with billing jobs ");
+		List<BillingExportJobFeature> jobFeatureList = billingExportJobDao.getAllActiveJobsFromDB();
+
+		if (jobFeatureList.size() > 0) {
+			for (int i = 0; i < jobFeatureList.size(); i++) {
+
+				BillingExportJobFeature feature = jobFeatureList.get(i);
+
+				BillingExportScheduleFeature sFeature = new BillingExportScheduleFeature();
+				sFeature.setScheduleType(feature.getScheduletype());
+
+				if (!feature.getScheduletype().equalsIgnoreCase("FixedDelay")) {
+					String cronExp = feature.getScheduletime();
+
+					if ((cronExp != null) && !cronExp.equals("")) {
+						BillingExportScheduleFeature schFeature = BillingExportUtil.getSchFeatureFromCronExp(cronExp);
+						sFeature.setMinute(schFeature.getMinute());
+						sFeature.setHour(schFeature.getHour());
+						sFeature.setScheduleDay(schFeature.getScheduleDay());
+					}
+				} else {
+					sFeature.setDelayTime(feature.getScheduletime());
+				}
+				String cronExp = BillingExportUtil.getCronExpression(sFeature);
+				//feature.setScheduletime(cronExp);
+				//billingExportJobDao.updateScheduleTime(feature.getJobid(), cronExp);
+				logger.debug("Billing Export job " + feature.getJobName() + " scheduled");
+				scheduleCronJobs = jobService.scheduleCronJob(feature.getJobName(), BillingExportJob.class, new Date(),
+						cronExp);
+
+			}
+		} else {
+			logger.debug("No Billing export job present in DB");
+		}
+	}
+
+	
+
+	/**
+	 * Method to initialize Message Broker Document generation job
+	 */
+	private void initialiseMessageBrokerGenerationJob() {
+
+		// Setting the Cron Trigger
+		TMTrigger triggerForMessage = new TMTrigger(TMTrigger.TYPE_CRON);
+		int interval = genericDao.getMessageBrokerUpdateInterval();
+
+		if (interval != 0) {
+			// create cron expression according to interval
+			createCronExpressionForMessages(interval);
+			Calendar now = Calendar.getInstance();
+			Long currentTime = now.getTimeInMillis();
+
+			long intervalInMilli = interval * 3600 * 1000;
+
+			long newInterval = currentTime + intervalInMilli;
+			logger.debug("Message Broker Generation job scheduled");
+			scheduleCronJobs = jobService.scheduleCronJob(MESSAGE_BROKER, MessageBrokerGenerationProcess.class,
+					new Date(newInterval), cron_trigger_message_broker_generation);
+			triggerForMessage.setCronExpression(cron_trigger_message_broker_generation);
+		}
+	}
+
+	/**
+	 * Method to initialize Delta EPG Cleanup process job
+	 */
+	private void deltaEPGCleanUpProcess() {
+
+		logger.info("Starting DeltaEPGCleanUpProcess");
+		String scheduledTimeInDB = null;
+		try {
+			scheduledTimeInDB = genericDao.getDeltaEpgCleanUpProcessTime();
+			if (scheduledTimeInDB != null && scheduledTimeInDB.isEmpty()) {
+				logger.debug(
+						"Time to run the DeltaEPGCleanUpProcess is not set in DB table SCHEDULETRAILIDCALCPARAMS, Please set the time to run the process");
+				return;
+			}
+		} catch (Exception e) {
+			logger.debug(" Error while getting scheduler time to clean up delta epg data ");
+		}
+
+		String[] time = scheduledTimeInDB.split(":");
+		String hour = time[0];
+		String minutes = time[1];
+
+		String repeatInterval = hour;
+
+		if (deltaEpgInterval < 24) {
+			repeatInterval = repeatInterval + "/" + deltaEpgInterval;
+		}
+
+		String cronExpression = "0 " + minutes + " " + repeatInterval + " * * ?";
+
+		logger.debug("Cron Expression for DeltaEPGCleanUpProcess : " + cronExpression);
+
+		logger.info("Scheduling cron job for DeltaEPGCleanUpProcessJob");
+		scheduleCronJobs = jobService.scheduleCronJob(DELTA_EPG_CLEANUP_PROCESS_JOB, DeltaEPGCleanUpProcess.class,
+				new Date(), cronExpression);
+
+	}
+
+	/**
+	 * Method to initialize CleanDevicesProcess job
+	 */
+	private void cleanUpSessionBasedDevices() {
+		logger.info("Starting CleanDevicesProcess ");
+
+		String scheduledTimeInDB = null;
+		try {
+			scheduledTimeInDB = genericDao.getTimeToCleanUpProcess();
+			if (scheduledTimeInDB != null && scheduledTimeInDB.isEmpty()) {
+				logger.debug(
+						"Time to run the CleanDevicesProcess is not set in DB table tmsystemsettings, Please set the time to run the process");
+				return;
+			}
+		} catch (Exception e) {
+			logger.error(" Error while getting scheduler time to clean up session based devices data ");
+		}
+
+		String[] time = scheduledTimeInDB.split(":");
+		String hour = time[0];
+		String minutes = time[1];
+
+		String repeatInterval = hour;
+
+		if (deviceCleanupInterval < 24) {
+			repeatInterval = repeatInterval + "/" + deviceCleanupInterval;
+		}
+
+		String cronExpression = "0 " + minutes + " " + repeatInterval + " * * ?";
+		logger.debug("Cron Expression for CleanDevicesProcess : " + cronExpression);
+
+		logger.info("Scheduling cron job for CleanDevicesProcessJob");
+		scheduleCronJobs = jobService.scheduleCronJob(CLEAN_DEVICES_PROCESS_JOB, CleanDevicesProcess.class, new Date(),
+				cronExpression);
+
+	}
+	
+	/**
+	 * Method to initialize Daily Mass Update job
+	 */
+	private void dailyMassUpdate() {
+		logger.info("Scheduling Daily Mass Update process : First run -> " + dailyMassTime
+				+ ", job will be executed every -> " + dailyMassInterval + " hours");
+		
+		String[] time = dailyMassTime.split(":");
+		String hour = time[0];
+		String minutes = time[1];
+
+		String repeatInterval = hour;
+
+		if (dailyMassInterval < 24) {
+			repeatInterval = repeatInterval + "/" + dailyMassInterval;
+		}
+		
+		String cronExpression = "0 " + minutes + " " + repeatInterval + " * * ?";
+		logger.debug("Cron Expression for Daily Mass Update : " + cronExpression);
+
+		logger.info("Scheduling cron job for Daily Mass Update process");
+		scheduleCronJobs = jobService.scheduleCronJob(DAILY_MASS_UPDATE_JOB, DailyMassUpdateProcess.class, new Date(),
+				cronExpression);
+	}
+
+	/**
+	 * Method to form cron expression for Message Broker Job
+	 * 
+	 * @param interval
+	 */
+	private void createCronExpressionForMessages(int interval) {
+
+		String cronExpression = "";
+		Calendar now = Calendar.getInstance();
+		Long currentTime = now.getTimeInMillis();
+
+		long intervalInMilli = interval * 3600 * 1000;
+
+		long newInterval = currentTime + intervalInMilli;
+
+		Calendar calendar = Calendar.getInstance();
+		calendar.setTimeInMillis(newInterval);
+
+		String repeatInterval = "0-23/" + interval;
+
+		// Update Cron
+		cron_trigger_message_broker_generation = calendar.get(Calendar.SECOND) + " " + calendar.get(Calendar.MINUTE)
+				+ " " + repeatInterval + " * * ?";
+
+		logger.debug("Cron expression for Message Broker Generation Job :" + cron_trigger_message_broker_generation);
+	}
+
+	/**
+	 * slidingWindowProcess
+	 */
+	public void slidingWindowProcess() {
+
+		slidingWindowProcess.executeSlidingWindow();
+
+	}
+
+	/**
+	 * globalInstallProcess
+	 */
+	private void globalInstallProcess() {
+		logger.debug("globalInstallProcess start");
+		scheduleCronJobs = jobService.scheduleCronJob(GLOBAL_INSTALL_DOCTYPE, GlobalBrokerGenerationProcess.class,
+				new Date(), cron_trigger_global_broker_set);
+
+	}
+
+	/**
+	 * webShowCaseProcess
+	 */
+	private void webShowCaseProcess() {
+		logger.debug("webShowCaseProcess start");
+		scheduleWebShowCaseCronJobs = jobService.scheduleCronJob(WEB_SHOWCASE_DOCTYPE, WebShowcase.class, new Date(),
+				cron_trigger_web_showcase_set);
+
+	}	
+	
+	/**
+	 * dynamicCategoryRuleProcess
+	 */
+	private void dynamicCategoryRuleProcess() {
+		JobKey jobKey = new JobKey(DYNAMIC_CATEGORY_RULE_DOCTYPE, DYNAMIC_CATEGORY_RULE_GROUP_KEY);
+		try{
+			boolean isExist=schedulerFactoryBean.getScheduler().checkExists(jobKey);
+			TriggerKey triggerKey = new TriggerKey(DYNAMIC_CATEGORY_RULE_DOCTYPE, DYNAMIC_CATEGORY_RULE_GROUP_KEY);
+			Trigger trigger=schedulerFactoryBean.getScheduler().getTrigger(triggerKey);
+			Date date=null;
+			if(trigger!=null){
+				Calendar calendar = Calendar.getInstance();
+				Date nextFireTime=trigger.getNextFireTime();
+				Date currentTime=calendar.getTime();
+				if(nextFireTime.getTime()<=currentTime.getTime()){
+					date = getNextFireDate(calendar, currentTime);
+				}
+				else{
+					date=trigger.getNextFireTime();
+				}
+				
+			}
+			else{
+				Date  date1=new Date();
+				String ruleRunTimeMins=ruleRunTimeMinutes();
+				int addMinuteTime=Integer.parseInt(ruleRunTimeMins);
+				
+				Calendar calendar = Calendar.getInstance();
+				calendar.setTime(date1);
+				calendar.set(Calendar.HOUR, date1.getHours()+1);
+				calendar.set(Calendar.MINUTE, addMinuteTime);
+				calendar.set(Calendar.SECOND, 0);
+				calendar.set(Calendar.MILLISECOND, 0);
+				
+				date = calendar.getTime();
+			}				
+			if(isExist && !jobService.isJobRunning(DYNAMIC_CATEGORY_RULE_DOCTYPE)){
+				scheduleDynCatRuleJob(date);								
+			} else if(isExist && jobService.isJobRunning(DYNAMIC_CATEGORY_RULE_DOCTYPE)){
+				scheduleDynCatRuleJob(date);								
+			} 
+			else if(!isExist){
+				scheduleDynCatRuleJob(date);
+			}
+		}catch(Exception e){
+			logger.error("Exception during start up of dynamicCategoryRuleProcess :"+e.getMessage());
+		}
+
+	}
+
+	/**
+	 * getNextFireDate Method
+	 * @param calendar
+	 * @param currentTime
+	 * @return
+	 */
+	private Date getNextFireDate(Calendar calendar, Date currentTime) {
+		Date date=null;
+		String ruleRunTimeMins=ruleRunTimeMinutes();
+		int addMinuteTime=Integer.parseInt(ruleRunTimeMins);
+		
+		calendar.setTime(currentTime);
+		calendar.set(Calendar.HOUR, currentTime.getHours()+1);
+		calendar.set(Calendar.MINUTE, addMinuteTime);
+		calendar.set(Calendar.SECOND, 0);
+		calendar.set(Calendar.MILLISECOND, 0);
+		date = calendar.getTime();
+		return date;
+	}
+	
+	/**
+	 * pcgProcess
+	 */
+	public void pcgProcess() {
+		logger.debug("pcgProcess start");
+		logger.info("+schedulePCGProcess()");
+		try {
+			// Time in minutes before midnight - if time is 15 minutes then
+			// process will start at 11:45 PM
+			final Long timeBeforePCGStart = companyServicesDao.getTimeBeforePCGStart();
+
+			Calendar timeToStartPCGProcess = getTimeToStartPCGProcess(timeBeforePCGStart);
+			if (timeToStartPCGProcess != null) {
+				Date timeToStartProcess = timeToStartPCGProcess.getTime();
+				long timeToStartProcessInMillis = timeToStartPCGProcess.getTimeInMillis();
+				String generatedCronVal = generateCronHourlyExp(timeToStartProcess);
+				schedulePcgCronJobs = jobService.scheduleCronJob(PCG_PROCESS_DOCTYPE, PCGProcessTimer.class,
+						new Date(timeToStartProcessInMillis), generatedCronVal);
+
+			}
+
+		} catch (Exception e) {
+			logger.error("Exception occured in pcgProcess:" + e.getMessage());
+		}
+
+	}
+
+	/**
+	 * Method to initialize thread
+	 */
+	private void threadInitialize() {
+
+		logger.debug("Thread initialization");
+
+		threadPoolExecutorService.setCorePoolSize(Integer.parseInt(TM_CORE_POOL_SIZE));
+
+		threadPoolExecutorService.setMaxPoolSize(Integer.parseInt(TM_MAX_POOL_SIZE));
+
+		threadPoolExecutorService.setKeepAliveTime(Integer.parseInt(TM_KEEP_ALIVE_TIME));
+
+		threadPoolExecutorService.setQueueCapacity(Integer.parseInt(TM_QUEUE_CAPACITY));
+
+		// A new thread pool is created...
+		executor = threadPoolExecutorService.createNewThreadPool();
+
+		logger.debug("Thread created : " + executor.getActiveCount());
+		executor.allowCoreThreadTimeOut(true);
+	}
+
+	/**
+	 * cleanUp
+	 */
+	public void cleanUp() throws Exception {
+		executor.shutdown();
+		logger.info("Executor Shutdown !!!! ");
+	}
+
+	/**
+	 * @author saubhagya.pradhan2 This class is used to maintain the frequency
+	 *         of Sliding Window process
+	 */
+	public class slidingWindowProcess {
+
+		/**
+		 * Execution method
+		 */
+		public void executeSlidingWindow() {
+			logger.debug("" + "" + LocalTime.now());
+
+			JobKey jobKey = new JobKey(SLIDING_WINDOW_DOCTYPE, SLIDING_WINDOW_GROUP_KEY);
+
+			try {
+				boolean isExist = schedulerFactoryBean.getScheduler().checkExists(jobKey);
+				TriggerKey triggerKey = new TriggerKey(SLIDING_WINDOW_DOCTYPE, SLIDING_WINDOW_GROUP_KEY);
+				Trigger trigger = schedulerFactoryBean.getScheduler().getTrigger(triggerKey);
+				Date date = null;
+				if (trigger != null) {
+					date = trigger.getNextFireTime();
+				} else {
+					date = new Date();
+				}
+				if (isExist && !jobService.isJobRunning(SLIDING_WINDOW_DOCTYPE)
+						&& date.getTime() < System.currentTimeMillis()) {
+					scheduleJob();
+				} else if (!isExist) {
+					scheduleJob();
+				}
+			} catch (Exception e) {
+				logger.error("Exception occured in run method" + e.getMessage());
+			}
+		}
+
+	}
+	
+
+	
+	/**
+	 * scheduleJob
+	 */
+	private void scheduleJob() {
+		Long millis = slidingWindow.mediatorDelay();
+		int repeatInterval = (int) (long) millis / 1000;
+		Date jobRunDate = new Date(System.currentTimeMillis() + 2000);
+		jobService.scheduleJobInSeconds(SLIDING_WINDOW_DOCTYPE, SlidingWindowProcess.class, jobRunDate, repeatInterval);
+	}
+	
+	/**
+	 * scheduleDynCatRuleJob
+	 * @param date
+	 */
+	private void scheduleDynCatRuleJob(Date date) {		
+		createCronExpression();				
+		jobService.scheduleCronJob(DYNAMIC_CATEGORY_RULE_DOCTYPE,DynamicCategoryRuleProcess.class, date, CRON_TRIGGER_DYN_CAT_RULE);
+	}
+
+	/**
+	 * generate cron expression from long millisecond
+	 * 
+	 * @param millis
+	 * @return
+	 */
+	public String generateCronExp(Long millis) {
+		long minutes = TimeUnit.MILLISECONDS.toMinutes(millis);
+		int futureMins = (int) minutes;
+		Calendar now = Calendar.getInstance();
+		now.add(Calendar.MINUTE, futureMins);
+		Date minutesFromNow = now.getTime();
+		CronUtil util = new CronUtil(minutesFromNow);
+		String generatedCronVal = util.generateCronExpression(minutesFromNow, futureMins);
+		return generatedCronVal;
+	}
+
+	/**
+	 * generate cron expression from long millisecond
+	 * 
+	 * @param millis
+	 * @return
+	 */
+	@SuppressWarnings("deprecation")
+	public String generateCronHourlyExp(Date date) {
+		int futureMins = date.getMinutes();
+		int futureHours = date.getHours();
+		Calendar now = Calendar.getInstance();
+		now.add(Calendar.MINUTE, futureMins);
+		now.add(Calendar.HOUR, futureHours);
+		Date minutesFromNow = now.getTime();
+		CronUtil util = new CronUtil(minutesFromNow);
+		String generatedCronVal = util.generateHourlyCronExpression(minutesFromNow, futureMins, futureHours);
+		return generatedCronVal;
+	}
+
+	/**
+	 * This method is used to consume and process the internal TM queue message.
+	 * 
+	 * @param msg
+	 */
+	@SuppressWarnings({ "unchecked" })
+	@JmsListener(destination = "${jndi.queue.internal.tm.trigger.queue}", containerFactory = "jmsListenerContainerFactory")
+	public void internalTMTriggerQueueReceiveMessage(Message msg) {
+		Integer slidingWindowDuration = 0;
+		Integer checkIntervalSec = 0;
+		ObjectMessage objectMessage = (ObjectMessage) msg;
+		try {
+
+			ObjectMapper objectMapper = new ObjectMapper();
+			Object obj = objectMessage.getObject();
+
+			Map<String, Object> map = objectMapper.convertValue(obj, Map.class);
+
+			if (null != map && NPVR_SLIDING_WINDOW.equals(map.get("BackGroundProcess"))) {
+
+				logger.debug("NPVRSlidingWindow Message to be consumed");
+
+				slidingWindowDuration = (Integer) map.get("RecSendToMedidatorFutureMinutes");
+				// periodic execution
+				if (null == slidingWindowDuration || slidingWindowDuration == 0) {
+					checkIntervalSec = (Integer) map.get("CheckIntervalSeconds");
+					logger.debug(
+							"Consumed Queue Value for CheckInterval In second---" + map.get("CheckIntervalSeconds"));
+
+					long delayValue = checkIntervalSec.longValue();
+
+					TriggerKey triggerKey = new TriggerKey(SLIDING_WINDOW_DOCTYPE, SLIDING_WINDOW_GROUP_KEY);
+					Trigger trigger = schedulerFactoryBean.getScheduler().getTrigger(triggerKey);
+					Date nextFireTimeDate = null;
+					if (trigger != null) {
+						nextFireTimeDate = trigger.getNextFireTime();
+					} else {
+						nextFireTimeDate = new Date();
+					}
+					logger.debug("Time Delay Frequency Value---" + delayValue);
+					int repeatInterval = (int) delayValue;
+					jobService.scheduleJobInSeconds(SLIDING_WINDOW_DOCTYPE, SlidingWindowProcess.class,
+							nextFireTimeDate, repeatInterval);
+				}
+				// single execution
+				else {
+					logger.debug("Consumed Queue Value---" + map.get("RecSendToMedidatorFutureMinutes"));
+					jobService.scheduleOneTimeJob(SLIDING_WINDOW_REC_MINS_JOB, SlidingWindowProcess.class, new Date());
+				}
+
+			}
+
+			else if (null != map && GLOBAL_BROKER_EXECUTION_JOB.equals(map.get("BackGroundProcess"))) {
+				if (null != map.get("frequency") && null != map.get(FORCE_PUBLISHED)) {
+					globalBrokerCounter = String.valueOf(map.get("frequency"));
+
+					if (globalBrokerCounter != null && Integer.parseInt(globalBrokerCounter) == 0) {
+						jobService.deleteJob(GLOBAL_INSTALL_DOCTYPE);
+
+					} else if (globalBrokerCounter != null && Integer.parseInt(globalBrokerCounter) > 0) {
+						// jobService.deleteJob(GLOBAL_INSTALL_DOCTYPE);
+
+						try {
+							String docType = "GlobalInstall";
+							cGlobalBrokerSettingFeature = genericDao.getBrokerGenerationSettiogForScheduler(docType);
+							if (cGlobalBrokerSettingFeature.getGenerationFrequency() != 0) {
+								scheduleGlobalBrokerJob(cGlobalBrokerSettingFeature.getGenerationFrequency(),
+										cGlobalBrokerSettingFeature.getGenerationFrequency() == 1
+												? cGlobalBrokerSettingFeature.getReferenceHour() : 0,
+										cGlobalBrokerSettingFeature.getGenerationFrequency() == 1
+												? cGlobalBrokerSettingFeature.getReferenceMinute() : 0,
+										cGlobalBrokerSettingFeature.getForcePublish(),
+										cGlobalBrokerSettingFeature.getDocumentType());
+
+							}
+						} catch (Exception e) {
+							logger.error("Exception in scheduleGlobalBrokerExecution", e);
+						}
+						scheduleCronJobs = jobService.scheduleCronJob(GLOBAL_INSTALL_DOCTYPE,
+								GlobalBrokerGenerationProcess.class, new Date(), cron_trigger_global_broker_set);
+					}
+				}
+
+			} else if (null != map && WEB_SHOWCASE_EXECUTION_JOB.equals(map.get("BackGroundProcess"))) {
+				if (null != map.get("frequency") && null != map.get(FORCE_PUBLISHED)) {
+					webShowCaseCounter = String.valueOf(map.get("frequency"));
+
+					if (webShowCaseCounter != null && Integer.parseInt(webShowCaseCounter) == 0) {
+						jobService.deleteJob(WEB_SHOWCASE_DOCTYPE);
+					} else if (webShowCaseCounter != null && Integer.parseInt(webShowCaseCounter) > 0) {
+						// jobService.deleteJob(WEB_SHOWCASE_DOCTYPE);
+
+						try {
+							String docType = "WebShowcase";
+							cGlobalBrokerSettingFeature = genericDao.getBrokerGenerationSettiogForScheduler(docType);
+							if (cGlobalBrokerSettingFeature.getGenerationFrequency() != 0) {
+								scheduleGlobalBrokerJob(cGlobalBrokerSettingFeature.getGenerationFrequency(),
+										cGlobalBrokerSettingFeature.getGenerationFrequency() == 1
+												? cGlobalBrokerSettingFeature.getReferenceHour() : 0,
+										cGlobalBrokerSettingFeature.getGenerationFrequency() == 1
+												? cGlobalBrokerSettingFeature.getReferenceMinute() : 0,
+										cGlobalBrokerSettingFeature.getForcePublish(),
+										cGlobalBrokerSettingFeature.getDocumentType());
+
+							}
+						} catch (Exception e) {
+							logger.error("Exception in WebShowcase", e);
+						}
+
+						scheduleWebShowCaseCronJobs = jobService.scheduleCronJob(WEB_SHOWCASE_DOCTYPE,
+								WebShowcase.class, new Date(), cron_trigger_web_showcase_set);
+					}
+				}
+
+			} else if (null != map && MESSAGE_BROKER_JOB_TRIGGER_ID.equals(map.get("triggerId"))) {
+				// jobService.deleteJob(MESSAGE_BROKER);
+				int interval = 0;
+				try {
+					interval = genericDao.getMessageBrokerUpdateInterval();
+
+					if (interval != 0) {
+						// create cron expression according to interval
+						createCronExpressionForMessages(interval);
+					}
+
+				} catch (Exception e) {
+					logger.error("Exception in Message Broker Job", e);
+				}
+				Calendar now = Calendar.getInstance();
+				Long currentTime = now.getTimeInMillis();
+
+				long intervalInMilli = interval * 3600 * 1000;
+
+				long newInterval = currentTime + intervalInMilli;
+
+				logger.debug("Message Broker Generation job rescheduled");
+				scheduleCronJobs = jobService.scheduleCronJob(MESSAGE_BROKER, MessageBrokerGenerationProcess.class,
+						new Date(newInterval), cron_trigger_message_broker_generation);
+			} else if (null != map && BILLING_EXPORT_JOB.equals(map.get("billingExportJob"))) {
+				String task = String.valueOf(map.get("task"));
+				int jobId = Integer.parseInt(map.get("jobId").toString());
+
+				logger.debug("Notification received from TM for task :" + task + " and jobId : " + jobId);
+
+				if (task.equalsIgnoreCase(UPDATE)) {
+					// Activate existing job
+					BillingExportJobFeature feature = billingExportJobDao.findByJobId(jobId);
+
+					BillingExportScheduleFeature sFeature = new BillingExportScheduleFeature();
+					sFeature.setScheduleType(feature.getScheduletype());
+
+					if (!feature.getScheduletype().equalsIgnoreCase("FixedDelay")) {
+						String cronExp = feature.getScheduletime();
+
+						if ((cronExp != null) && !cronExp.equals("")) {
+							BillingExportScheduleFeature schFeature = BillingExportUtil
+									.getSchFeatureFromCronExp(cronExp);
+							sFeature.setMinute(schFeature.getMinute());
+							sFeature.setHour(schFeature.getHour());
+							sFeature.setScheduleDay(schFeature.getScheduleDay());
+						}
+					} else {
+						sFeature.setDelayTime(feature.getScheduletime());
+					}
+
+					String cronExp = BillingExportUtil.getCronExpression(sFeature);
+					//feature.setScheduletime(cronExp);
+					//billingExportJobDao.updateScheduleTime(feature.getJobid(), cronExp);
+					// If schedule present in QRTZ_JOB_DETAILS , delete it
+					logger.debug("Deleting job : " + feature.getJobName() + "in case it exists.");
+					jobService.deleteJob(feature.getJobName());
+
+					if (feature.getRecordStatusCode().equals("A")) {
+
+						logger.debug("Creating a new schedule for job : " + feature.getJobName());
+						scheduleCronJobs = jobService.scheduleCronJob(feature.getJobName(), BillingExportJob.class,
+								new Date(), cronExp);
+					}
+
+				} else if (task.equalsIgnoreCase(ACTIVATE)) {
+					// Activate existing job
+					BillingExportJobFeature feature = billingExportJobDao.findByJobId(jobId);
+
+					BillingExportScheduleFeature sFeature = new BillingExportScheduleFeature();
+					sFeature.setScheduleType(feature.getScheduletype());
+
+					if (!feature.getScheduletype().equalsIgnoreCase("FixedDelay")) {
+						String cronExp = feature.getScheduletime();
+
+						if ((cronExp != null) && !cronExp.equals("")) {
+							BillingExportScheduleFeature schFeature = BillingExportUtil
+									.getSchFeatureFromCronExp(cronExp);
+							sFeature.setMinute(schFeature.getMinute());
+							sFeature.setHour(schFeature.getHour());
+							sFeature.setScheduleDay(schFeature.getScheduleDay());
+						}
+					} else {
+						sFeature.setDelayTime(feature.getScheduletime());
+					}
+
+					String cronExp = BillingExportUtil.getCronExpression(sFeature);
+					//feature.setScheduletime(cronExp);
+					//billingExportJobDao.updateScheduleTime(feature.getJobid(), cronExp);
+					// If schedule present in QRTZ_JOB_DETAILS , delete it
+					logger.debug("Deleting job : " + feature.getJobName() + "in case it exists.");
+					jobService.deleteJob(feature.getJobName());
+
+					logger.debug("Creating a new schedule for job : " + feature.getJobName());
+					scheduleCronJobs = jobService.scheduleCronJob(feature.getJobName(), BillingExportJob.class,
+								new Date(), cronExp);
+				} else if (task.equalsIgnoreCase(INACTIVATE)) {
+					// Activate existing job
+					BillingExportJobFeature feature = billingExportJobDao.findByJobId(jobId);
+
+					BillingExportScheduleFeature sFeature = new BillingExportScheduleFeature();
+					sFeature.setScheduleType(feature.getScheduletype());
+
+					if (!feature.getScheduletype().equalsIgnoreCase("FixedDelay")) {
+						String cronExp = feature.getScheduletime();
+
+						if ((cronExp != null) && !cronExp.equals("")) {
+							BillingExportScheduleFeature schFeature = BillingExportUtil
+									.getSchFeatureFromCronExp(cronExp);
+							sFeature.setMinute(schFeature.getMinute());
+							sFeature.setHour(schFeature.getHour());
+							sFeature.setScheduleDay(schFeature.getScheduleDay());
+						}
+					} else {
+						sFeature.setDelayTime(feature.getScheduletime());
+					}
+
+					String cronExp = BillingExportUtil.getCronExpression(sFeature);
+					//feature.setScheduletime(cronExp);
+					//billingExportJobDao.updateScheduleTime(feature.getJobid(), cronExp);
+					// If schedule present in QRTZ_JOB_DETAILS , delete it
+					logger.debug("Deleting job : " + feature.getJobName() + "in case it exists.");
+					jobService.deleteJob(feature.getJobName());
+				}
+
+				logger.debug("Billing Export Job Notification received for task :" + task);
+			}
+			else if (null != map && DYNAMIC_CATEGORY_RULE_EXECUTION_JOB.equals(map.get("BackGroundProcess"))) {
+				
+				createCronExpression();				
+				jobService.scheduleCronJob(DYNAMIC_CATEGORY_RULE_DOCTYPE,DynamicCategoryRuleProcess.class, new Date(), CRON_TRIGGER_DYN_CAT_RULE);
+			}
+
+		} catch (JMSException e) {
+			logger.error("JMSException While Consuming Background Queue Message" + e.getMessage());
+			throw new MessageQueueException(e.getErrorCode(), e.getMessage());
+		} catch (Exception e) {
+			logger.error("Exception While Consuming Background Queue Message" + e.getMessage());
+			throw new CustomRuntimeException(e.getMessage());
+		}
+
+	}
+
+	/**
+	 * getBrokerGenerationSettiogForScheduler for getting the frequency
+	 */
+	public void getBrokerGenerationSettingForScheduler(String docType) {
+		try {
+			cGlobalBrokerSettingFeature = genericDao.getBrokerGenerationSettiogForScheduler(docType);
+			logger.debug(
+					"GenerationFrequency:" + cGlobalBrokerSettingFeature.getGenerationFrequency() + " for " + docType);
+			logger.debug("ReferenceHour:" + cGlobalBrokerSettingFeature.getReferenceHour() + " for " + docType);
+			logger.debug("ReferenceMinute:" + cGlobalBrokerSettingFeature.getReferenceMinute() + " for " + docType);
+			logger.debug("ForcePublish:" + cGlobalBrokerSettingFeature.getForcePublish() + " for " + docType);
+
+			if (cGlobalBrokerSettingFeature.getGenerationFrequency() != 0) {
+				scheduleGlobalBrokerJob(cGlobalBrokerSettingFeature.getGenerationFrequency(),
+						cGlobalBrokerSettingFeature.getGenerationFrequency() == 1
+								? cGlobalBrokerSettingFeature.getReferenceHour() : 0,
+						cGlobalBrokerSettingFeature.getGenerationFrequency() == 1
+								? cGlobalBrokerSettingFeature.getReferenceMinute() : 0,
+						cGlobalBrokerSettingFeature.getForcePublish(), cGlobalBrokerSettingFeature.getDocumentType());
+
+			}
+		} catch (Exception e) {
+			logger.error("Exception in scheduleGlobalBrokerExecution", e);
+		}
+	}
+
+	/**
+	 * @param frequency
+	 * @param refHour
+	 * @param refMinute
+	 * @param forcePublish
+	 * @param docType
+	 * @throws Exception
+	 */
+	@SuppressWarnings("unused")
+	public void scheduleGlobalBrokerJob(int frequency, int refHour, int refMinute, int forcePublish, String docType)
+			throws Exception {
+		logger.info("Scheduling Global Broker Execution Job");
+		try {
+			// Setting the Cron Trigger
+			TMTrigger trigger = new TMTrigger(TMTrigger.TYPE_CRON);
+			// Global Broker Job.
+			TMJob job;
+			if ((GLOBAL_INSTALL_DOCTYPE.toUpperCase()).equals(docType.toUpperCase())) {
+				job = new GlobalBrokerExecutionJob(forcePublish);
+				createCronExpression(frequency, refHour, refMinute, GLOBAL_INSTALL_DOCTYPE);
+				trigger.setCronExpression(cron_trigger_global_broker_set);
+			} else if ((WEB_SHOWCASE_DOCTYPE.toUpperCase()).equals(docType.toUpperCase())) {
+				job = new GlobalBrokerExecutionJob(forcePublish);
+				createCronExpression(frequency, refHour, refMinute, WEB_SHOWCASE_DOCTYPE);
+				trigger.setCronExpression(cron_trigger_web_showcase_set);
+			}
+
+		} catch (Exception e) {
+			logger.error("Failed to schedule Global Broker Execution : " + e.getMessage());
+			throw new Exception("Failed to schedule Global Broker Execution : " + e.getMessage());
+
+		}
+
+	} // end of method scheduleGlobalBrokerJob
+
+	/**
+	 * This method will create cron expression
+	 * 
+	 */
+	private void createCronExpression(int frequency, int refHour, int refMinute, String docType) {
+		try {
+			if (docType.equals(GLOBAL_INSTALL_DOCTYPE)) {
+				if (frequency == ONCE_PER_DAY) {
+					cron_trigger_global_broker_set = "0 " + refMinute + " " + refHour + " * * ?";
+				} else {
+					Calendar cal = Calendar.getInstance();
+					cron_trigger_global_broker_set = "0 " + cal.get(Calendar.MINUTE) + " "
+							+ generateCronHourExpression(frequency, cal.get(Calendar.HOUR_OF_DAY)) + " " + "* * ?";
+				}
+				logger.info("Cron Expression for GLOBAL Execution is " + cron_trigger_global_broker_set);
+			} else if (docType.equals(WEB_SHOWCASE_DOCTYPE)) {
+
+				if (frequency == ONCE_PER_DAY) {
+					cron_trigger_web_showcase_set = "0 " + refMinute + " " + refHour + " * * ?";
+				} else {
+					Calendar cal = Calendar.getInstance();
+					cron_trigger_web_showcase_set = "0 " + cal.get(Calendar.MINUTE) + " "
+							+ generateCronHourExpression(frequency, cal.get(Calendar.HOUR_OF_DAY)) + " " + "* * ?";
+				}
+				logger.info("Cron Expression for GLOBAL Execution is " + cron_trigger_web_showcase_set);
+
+			}
+
+		} catch (Exception exception) {
+			String strMessage = "";
+			if (exception instanceof Exception) {
+				strMessage = exception.getMessage();
+			} else {
+				strMessage = exception.getMessage();
+			}
+
+			logger.error(strMessage);
+		}
+	} // end method createCronExpression
+
+	/**
+	 * This method generates cron hour expression
+	 * 
+	 * @param frequency
+	 * @param hourOfDay
+	 * @return String
+	 */
+	private String generateCronHourExpression(int frequency, int hourOfDay) {
+
+		List<Integer> hoursList = new ArrayList<Integer>();
+
+		for (int index = 0; index < frequency; index++) {
+			int newhour = hourOfDay + (24 / frequency);
+			if (newhour == 24) {
+				newhour = 0;
+			} else if (newhour > 24) {
+				newhour = newhour - 24;
+			}
+			hoursList.add(newhour);
+			hourOfDay = newhour;
+		}
+
+		Collections.sort(hoursList);
+
+		StringBuilder hourExpression = new StringBuilder();
+		for (Integer hour : hoursList) {
+			if (hourExpression.length() > 0) {
+				hourExpression.append(",");
+			}
+			hourExpression.append(hour + "");
+		}
+		return hourExpression.toString();
+	}
+
+	/**
+	 * This Method will return the time when the cleanup process will start
+	 * 
+	 * @param cleanUpTime
+	 * @return
+	 */
+	private static Calendar getTimeToStartPCGProcess(Long timeBeforePCGStart) {
+		logger.info("+getTimeToStartPCGProcess()");
+		// today
+		Calendar date = new GregorianCalendar();
+		try {
+
+			// reset hour, minutes, seconds and millis
+			date.set(Calendar.HOUR_OF_DAY, 0);
+			date.set(Calendar.MINUTE, 0);
+			date.set(Calendar.SECOND, 0);
+			date.set(Calendar.MILLISECOND, 0);
+			logger.debug("Minutes before running PCG Process : " + timeBeforePCGStart);
+			date.add(Calendar.DATE, 1);
+			date.add(Calendar.MINUTE, -(timeBeforePCGStart.intValue()));
+
+		} catch (Exception e) {
+			logger.debug(" Error while getting time before strating PCG process:" + e.getMessage());
+			throw new CustomRuntimeException(e.getMessage());
+		}
+
+		return date;
+	}
+	
+	/**
+     * This method will create cron expression 
+     *
+     */
+    private void createCronExpression() {
+    	try {
+	    	String ruleRunTime = genericDao.getRuleRunTime();
+	    	String hour = null;
+	    	String minutes = null;
+	    	if(ruleRunTime == null) {
+	    		return;
+	    	}
+	    	StringTokenizer tokenizer = new StringTokenizer(ruleRunTime, ":");
+	    	if(tokenizer.hasMoreElements()) {
+	    		hour = (String)tokenizer.nextElement();
+	    	}
+	    	if(tokenizer.hasMoreElements()) {
+	    		minutes = (String)tokenizer.nextElement();
+	    	}
+	    	
+	    	if(hour != null && minutes != null) {
+	    		CRON_TRIGGER_DYN_CAT_RULE = "0 " + minutes.trim() + " 0-23 * * ?";
+	    	}
+    	} catch (Exception exception) {    		
+    		logger.error("Exception occurred while forming cron expression :"+exception.getMessage());
+    	}
+    } // end method createCronExpression 
+    
+    /**
+     * This method will return next rule runtime minutes
+     *
+     */
+    private String ruleRunTimeMinutes() {
+    	String val= null;
+    	try {
+	    	String ruleRunTimeVal = genericDao.getRuleRunTime();	    	
+	    	if(ruleRunTimeVal != null) {
+	    		String ruleRunTimeMinutes []= ruleRunTimeVal.split(":");
+	    		val=ruleRunTimeMinutes[1];
+	    		
+	    	}
+	    	
+    	} catch (Exception exception) {    		
+    		logger.error("Exception occurred while forming cron expression :"+exception.getMessage());
+    	}
+		return val;
+    } // end method ruleRunTimeMinutes 
+    
+
+}
