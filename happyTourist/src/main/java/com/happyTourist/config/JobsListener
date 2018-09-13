@@ -1,0 +1,45 @@
+import org.apache.logging.log4j.LogManager;
+import org.apache.logging.log4j.Logger;
+import org.quartz.JobExecutionContext;
+import org.quartz.JobExecutionException;
+import org.quartz.JobListener;
+import org.quartz.Trigger;
+import org.springframework.stereotype.Component;
+
+/**
+ * This class used to listen the TMBackgroundService Jobs
+ * @author saubhagya.pradhan2
+ *
+ */
+@Component
+public class JobsListener implements JobListener{
+	/** logger */
+	private static final Logger logger = LogManager.getLogger(JobsListener.class.getName());
+	
+	@Override
+	public String getName() {
+		return "globalJob";
+	}
+	/**
+   	 * This method is used when any JOB is about to execute	
+   	 */
+	@Override
+	public void jobToBeExecuted(JobExecutionContext context) {
+		Trigger trigger = context.getTrigger();
+	}
+	/**
+   	 * This method is used when any JOB is vetoed	
+   	 */
+	@Override
+	public void jobExecutionVetoed(JobExecutionContext context) {
+		Trigger trigger = context.getTrigger();
+	}
+	/**
+   	 * This method is used when any JOB was executed	
+   	 */
+	@Override
+	public void jobWasExecuted(JobExecutionContext context, JobExecutionException jobException) {
+		Trigger trigger = context.getTrigger();
+	}
+
+}
