@@ -1,0 +1,156 @@
+import java.io.IOException;
+import java.util.HashMap;
+
+import javax.jms.JMSException;
+import javax.naming.NamingException;
+
+import org.apache.logging.log4j.LogManager;
+import org.apache.logging.log4j.Logger;
+import org.quartz.DisallowConcurrentExecution;
+import org.quartz.InterruptableJob;
+import org.quartz.JobExecutionContext;
+import org.quartz.JobExecutionException;
+import org.quartz.JobKey;
+import org.quartz.PersistJobDataAfterExecution;
+import org.quartz.UnableToInterruptJobException;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.scheduling.quartz.QuartzJobBean;
+import org.springframework.stereotype.Component;
+
+import com.myrio.tm.framework.internaltrigger.InternalTrigger;
+import com.myrio.tm.framework.internaltrigger.InternalTriggerMessage;
+import com.proximus.tv.tmbackgroundservices.helpers.GlobalBrokerSettingFeature;
+import com.proximus.tv.tmbackgroundservices.repositories.GenericDao;
+import com.proximus.tv.tmbackgroundservices.util.MessageTypes;
+import com.proximus.tv.tmbackgroundservices.util.QueueSenderUtils;
+
+/**
+ * @author saubhagya.pradhan2 This class is used to maintain the frequency
+ *         of Web showcase Process process
+ */
+@Component
+@DisallowConcurrentExecution
+public class WebShowcase extends QuartzJobBean implements InterruptableJob {
+
+	private static final Logger logger = LogManager.getLogger(WebShowcase.class);
+
+	private volatile boolean toStopFlag = true;
+	
+	
+	@Autowired
+	GenericDao genericDao;
+	
+	/**
+	 * queueSenderUtils
+	 */
+	@Autowired
+	QueueSenderUtils queueSenderUtils;
+	
+	GlobalBrokerSettingFeature cGlobalBrokerSettingFeature = null;
+
+	@Override
+	public void executeInternal(JobExecutionContext jobExecutionContext) throws JobExecutionException {
+		
+		try {
+		JobKey key = jobExecutionContext.getJobDetail().getKey();
+		logger.debug("WebShowcaseProcess Job started with key :" + key.getName() + ", Group :" + key.getGroup() + " , Thread Name :"
+				+ Thread.currentThread().getName());
+		
+
+		logger.debug("Inside webShowcaseProcess");
+		boolean forcepublish = false;
+		String docType = "WebShowcase";
+		cGlobalBrokerSettingFeature = genericDao.getBrokerGenerationSettiogForScheduler(docType);
+		int forcepublishVal = cGlobalBrokerSettingFeature.getForcePublish();
+		if (forcepublishVal == 0) {
+			forcepublish = false;
+		} else {
+			forcepublish = true;
+		}
+		/** numToTrigger */
+		HashMap<Integer, InternalTrigger> numToTrigger = new HashMap<Integer, InternalTrigger>();
+		numToTrigger.put(InternalTrigger.SHOWCASE_FOR_CPD.legacyNumValue(), InternalTrigger.SHOWCASE_FOR_CPD);
+		sendTrigger(numToTrigger.get(InternalTrigger.SHOWCASE_FOR_CPD.legacyNumValue()), false, null,
+				Integer.MIN_VALUE, null, forcepublish, MessageTypes.GENERATION_PERIODIC);
+
+	
+		
+		
+		logger.debug("WebShowcaseProcess Job ended with key :" + key.getName() + ", Group :" + key.getGroup() + " , Thread Name :"
+				+ Thread.currentThread().getName());
+		}catch (Exception e) {
+			logger.debug("Execution failled : Exception occured while executing the job" + e.getMessage());
+			e.printStackTrace();
+		}
+	}
+
+	@Override
+	public void interrupt() throws UnableToInterruptJobException {
+		logger.debug("WebShowcaseProcess Job thread stopping/interrupting ...... ");
+	}
+
+	/**
+	 * @param trigger
+	 * @param subtriggers
+	 * @param languageCode
+	 * @param channelId
+	 * @param locationId
+	 * @param forcePublish
+	 * @param source
+	 */
+	public void sendTrigger(InternalTrigger trigger, boolean subtriggers, String languageCode, int channelId,
+			String locationId, boolean forcePublish, String source) {
+		// forcePublish is passed for bIsImmideateTriggerRequired as its
+		// doing the same thing
+		InternalTriggerMessage obj_InternalTriggerMessage = prepareInternalTriggerMessage(trigger, subtriggers,
+				languageCode, channelId, locationId, forcePublish, source);
+
+		sendInternalTrigger(obj_InternalTriggerMessage);
+
+	}
+
+	/**
+	 * PrepareInternalTriggerMessage and setting its
+	 * ImmideateTriggerRequired value true, when TM is started, otherwise
+	 * false
+	 * 
+	 * @param trigger
+	 * @param subtriggers
+	 * @param languageCode
+	 * @param channelId
+	 * @param locationId
+	 * @param bIsImmideateTriggerRequired
+	 * @return
+	 */
+	private InternalTriggerMessage prepareInternalTriggerMessage(InternalTrigger trigger, boolean subtriggers,
+			String languageCode, int channelId, String locationId, boolean bIsImmideateTriggerRequired,
+			String source) {
+		InternalTriggerMessage obj_InternalTriggerMessage = new InternalTriggerMessage(trigger, languageCode,
+				subtriggers, channelId, locationId);
+		obj_InternalTriggerMessage.setIsImmideateTriggerRequired(bIsImmideateTriggerRequired);
+		if ((trigger.legacyNumValue() == InternalTrigger.GLOBAL_INSTALL.legacyNumValue()
+				|| trigger.legacyNumValue() == InternalTrigger.SHOWCASE_FOR_CPD.legacyNumValue())
+				&& source == null) {
+			source = MessageTypes.GENERATION_ADMIN_CHANGE;
+		}
+		obj_InternalTriggerMessage.setSource(source);
+		return obj_InternalTriggerMessage;
+	}
+
+	/**
+	 * @see InternalTriggerBean#sendTrigger(InternalTrigger, boolean,
+	 *      String, int, String, boolean)
+	 * 
+	 * @param obj_InternalTriggerMessage
+	 */
+	private void sendInternalTrigger(InternalTriggerMessage obj_InternalTriggerMessage) {
+		// To Do
+		logger.debug("Inside sendInternalTrigger method");
+		try {
+			queueSenderUtils.sendMessage(obj_InternalTriggerMessage);
+		} catch (JMSException | IOException | NamingException e) {
+			logger.error("Exception Occured in sendInternalTrigger method" + e.getMessage());
+		}
+	}
+
+}
