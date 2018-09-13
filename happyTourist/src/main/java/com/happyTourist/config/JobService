@@ -1,0 +1,120 @@
+import java.util.Date;
+import java.util.List;
+import java.util.Map;
+
+import org.springframework.scheduling.quartz.QuartzJobBean;
+
+/**
+ * This interface defines api for managing jobs, getting job data, job states
+ * etc.
+ * @author saubhagya.pradhan2
+ *
+ */
+public interface JobService {
+	/**
+	 * This method is used to schedule job at the given time
+	 * @param jobName
+	 * @param jobClass
+	 * @param date
+	 * @return
+	 */
+	boolean scheduleOneTimeJob(String jobName, Class<? extends QuartzJobBean> jobClass, Date date);
+	
+	
+	/**
+	 * This method is used to schedule  job at the given time with frequency in seconds
+	 * @param jobName
+	 * @param jobClass
+	 * @param date
+	 * @param repeatInterval
+	 * @return
+	 */
+	boolean scheduleJobInSeconds(String jobName, Class<? extends QuartzJobBean> jobClass, Date date,int repeatInterval);
+	
+	
+	/**
+	 * This method is used to schedule cron job at the given time
+	 * @param jobName
+	 * @param jobClass
+	 * @param date
+	 * @param cronExpression
+	 * @return
+	 */
+	boolean scheduleCronJob(String jobName, Class<? extends QuartzJobBean> jobClass, Date date, String cronExpression);
+	/**
+	 * This method is used to update job at the given time
+	 * @param jobName
+	 * @param date
+	 * @return
+	 */
+	boolean updateOneTimeJob(String jobName, Date date);
+	/**
+	 * This method is used to update cron job at the given time
+	 * @param jobName
+	 * @param date
+	 * @param cronExpression
+	 * @return
+	 */
+	boolean updateCronJob(String jobName, Date date, String cronExpression);
+	
+	/**
+	 * This method is used to unschedule  job at the given time
+	 * @param jobName
+	 * @return
+	 */
+	boolean unScheduleJob(String jobName);
+	/**
+	 * This method is used to delete job at the given time
+	 * @param jobName
+	 * @return
+	 */
+	boolean deleteJob(String jobName);
+	/**
+	 * This method is used to pause job at the given time
+	 * @param jobName
+	 * @return
+	 */
+	boolean pauseJob(String jobName);
+	/**
+	 * This method is used to resume job at the given time
+	 * @param jobName
+	 * @return
+	 */
+	boolean resumeJob(String jobName);
+	/**
+	 * This method is used to start job immediately
+	 * @param jobName
+	 * @return
+	 */
+	boolean startJobNow(String jobName);
+	/**
+	 * This method is used to check whether the job is running at the given time
+	 * @param jobName
+	 * @return
+	 */
+	boolean isJobRunning(String jobName);
+	/**
+	 * This method is used to get all the job list
+	 * @return
+	 */
+	List<Map<String, Object>> getAllJobs();
+	/**
+	 * This method is used to check whether the job is present
+	 * @param jobName
+	 * @return
+	 */
+	boolean isJobWithNamePresent(String jobName);
+	/**
+	 * This method is used to check the job state
+	 * @param jobName
+	 * @return
+	 */
+	String getJobState(String jobName);
+	/**
+	 * his method is used to stop the job
+	 * @param jobName
+	 * @return
+	 */
+	boolean stopJob(String jobName);
+	
+}
