@@ -1,0 +1,941 @@
+import java.util.ArrayList;
+import java.util.Date;
+import java.util.HashMap;
+import java.util.List;
+import java.util.Map;
+
+import org.apache.logging.log4j.LogManager;
+import org.apache.logging.log4j.Logger;
+import org.quartz.JobDataMap;
+import org.quartz.JobDetail;
+import org.quartz.JobExecutionContext;
+import org.quartz.JobKey;
+import org.quartz.Scheduler;
+import org.quartz.SchedulerException;
+import org.quartz.SimpleScheduleBuilder;
+import org.quartz.SimpleTrigger;
+import org.quartz.Trigger;
+import org.quartz.Trigger.TriggerState;
+import org.quartz.TriggerBuilder;
+import org.quartz.TriggerKey;
+import org.quartz.impl.matchers.GroupMatcher;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.context.ApplicationContext;
+import org.springframework.context.annotation.Lazy;
+import org.springframework.scheduling.quartz.QuartzJobBean;
+import org.springframework.scheduling.quartz.SchedulerFactoryBean;
+import org.springframework.stereotype.Service;
+
+/**
+ * This class implements api for managing jobs, getting job data, job states
+ * etc.
+ * 
+ * @author saubhagya.pradhan2
+ *
+ */
+@Service
+public class JobServiceImpl implements JobService {
+	private static final Logger logger = LogManager.getLogger(JobServiceImpl.class.getName());
+	/**
+	 * SchedulerFactoryBean
+	 */
+	@Autowired
+	@Lazy
+	SchedulerFactoryBean schedulerFactoryBean;
+
+	/**
+	 * ApplicationContext
+	 */
+	@Autowired
+	private ApplicationContext context;
+
+	/**
+	 * WEBSHOWCASE_GROUP_KEY
+	 */
+	String WEBSHOWCASE_GROUP_KEY = "WebShowcaseGroup";
+	/**
+	 * GLOBALINSTALL_GROUP_KEY
+	 */
+	String GLOBALINSTALL_GROUP_KEY = "GlobalInstallGroup";
+
+	/**
+	 * SLIDING_WINDOW_GROUP_KEY
+	 */
+	String SLIDING_WINDOW_GROUP_KEY = "SlidingWindowGroup";
+
+	/**
+	 * PCG_PROCESS_GROUP_KEY
+	 */
+	String PCG_PROCESS_GROUP_KEY = "PCGProcessGroup";
+
+	/**
+	 * MIDNIGHT_TASK_GROUP_KEY
+	 */
+	String MIDNIGHT_TASK_GROUP_KEY = "MidnightTaskGroup";
+
+	/**
+	 * RETRY_TASK_GROUP_KEY
+	 */
+	String RETRY_TASK_GROUP_KEY = "RetryTaskGroup";
+
+	/**
+	 * NPVR_QUOTA_CHECK_TASK_GROUP_KEY
+	 */
+	String NPVR_QUOTA_CHECK_TASK_GROUP_KEY = "NPVRQuotaCheckTaskGroup";
+	/**
+	 * MESSAGEBROKER_GROUP_KEY
+	 */
+	String MESSAGEBROKER_GROUP_KEY = "MessageBrokerGroup";
+
+	/**
+	 * DELTA_EPG_GROUP_KEY
+	 */
+	String DELTA_EPG_GROUP_KEY = "DeltaEpgGroup";
+
+	/**
+	 * CLEAN_DEVICES_GROUP_KEY
+	 */
+	String CLEAN_DEVICES_GROUP_KEY = "CleanDevicesGroup";
+
+	/**
+	 * BILLING_EXPORT_GROUP_KEY
+	 */
+	String BILLING_EXPORT_GROUP_KEY = "BillingExportGroup";
+
+	/**
+	 * DYNAMIC_CATEGORY_RULE_GROUP_KEY
+	 */
+	String DYNAMIC_CATEGORY_RULE_GROUP_KEY = "DynamicCategoryRuleGroup";
+	
+	/**
+	 * DAILY_MASS_GROUP_KEY
+	 */
+	String DAILY_MASS_GROUP_KEY = "DailyMassGroup";
+	
+	/**
+	 * GLOBAL_INSTALL_DOCTYPE
+	 */
+	private static final String GLOBAL_INSTALL_DOCTYPE = "GlobalInstall";
+
+	/**
+	 * WEB_SHOWCASE_DOCTYPE
+	 */
+	private static final String WEB_SHOWCASE_DOCTYPE = "WebShowcase";
+	
+	/**
+	 * DYNAMIC_CATEGORY_RULE_DOCTYPE
+	 */
+	private static final String DYNAMIC_CATEGORY_RULE_DOCTYPE = "DynamicCategoryRuleExecution";
+
+	/**
+	 * SLIDING_WINDOW_DOCTYPE
+	 */
+	private static final String SLIDING_WINDOW_DOCTYPE = "SlidingWindow";
+
+	/** SLIDING_WINDOW_REC_MINS_JOB */
+	private static final String SLIDING_WINDOW_REC_MINS_JOB = "SlidingWindowRecMinutesJob";
+
+	/**
+	 * PCG_PROCESS_DOCTYPE
+	 */
+	private static final String PCG_PROCESS_DOCTYPE = "PCGProcess";
+
+	/**
+	 * DELTA_EPG_CLEANUP_PROCESS_JOB
+	 */
+	private static final String DELTA_EPG_CLEANUP_PROCESS_JOB = "DeltaEPGCleanUpProcessJob";
+
+	/**
+	 * CLEAN_DEVICES_PROCESS_JOB
+	 */
+	private static final String CLEAN_DEVICES_PROCESS_JOB = "CleanDevicesProcessJob";
+	
+	/**
+	 * DAILY_MASS_UPDATE_JOB
+	 */
+	private static final String DAILY_MASS_UPDATE_JOB = "DailyMassUpdateJob";
+
+	/**
+	 * MIDNIGHT_TASK_DOCTYPE
+	 */
+	private static final String MIDNIGHT_TASK_DOCTYPE = "MidnightTask";
+
+	/**
+	 * RETRY_TASK_DOCTYPE
+	 */
+	private static final String RETRY_TASK_DOCTYPE = "RetryTask";
+
+	/**
+	 * NPVR_QUOTA_CHECK_TASK_DOCTYPE
+	 */
+	private static final String NPVR_QUOTA_CHECK_TASK_DOCTYPE = "NPVRQuotaCheckTask";
+
+	/**
+	 * MESSAGE_BROKER
+	 */
+	private static final String MESSAGE_BROKER = "MessageBroker";
+
+	/**
+	 * BILLING_EXPORT_JOB
+	 */
+	private static final String BILLING_EXPORT_JOB = "BillingExportJob";
+	
+
+	/**
+	 * QOE_CONFIG_FILE_DISTRIBUTION_JOB
+	 */
+	private static final String QOE_CONFIG_FILE_DISTRIBUTION_JOB = "QoEConfigFileDistributionJob";
+
+	/**
+	 * QOE_CONFIG_FILE_DISTRIBUTION_JOB_GROUP_KEY
+	 */
+	String QOE_CONFIG_FILE_DISTRIBUTION_JOB_GROUP_KEY = "QoEConfigFileDistributionJobGroup";
+
+	/**
+	 * Schedule a job by jobName at given date.
+	 */
+	@Override
+	public boolean scheduleOneTimeJob(String jobName, Class<? extends QuartzJobBean> jobClass, Date date) {
+		logger.info("Request received to scheduleJob");
+
+		JobDetail jobDetail = null;
+
+		Boolean exists = isJobExist(jobName);
+		if (exists) {
+			deleteJob(jobName);
+		}
+
+		if (GLOBAL_INSTALL_DOCTYPE.equals(jobName)) {
+			jobDetail = JobUtil.createJob(jobClass, false, context, jobName, GLOBALINSTALL_GROUP_KEY);
+		} else if (WEB_SHOWCASE_DOCTYPE.equals(jobName)) {
+			jobDetail = JobUtil.createJob(jobClass, false, context, jobName, WEBSHOWCASE_GROUP_KEY);
+		} else if (SLIDING_WINDOW_REC_MINS_JOB.equals(jobName)) {
+			jobDetail = JobUtil.createJob(jobClass, false, context, jobName, SLIDING_WINDOW_GROUP_KEY);
+		} else if (MESSAGE_BROKER.equals(jobName)) {
+			jobDetail = JobUtil.createJob(jobClass, false, context, jobName, MESSAGEBROKER_GROUP_KEY);
+		}
+		logger.info("creating trigger for key : " + jobName + " at date :" + date);
+		Trigger cronTriggerBean = JobUtil.createSingleTrigger(jobName, date,
+				SimpleTrigger.MISFIRE_INSTRUCTION_FIRE_NOW);
+
+		try {
+			Scheduler scheduler = schedulerFactoryBean.getScheduler();
+			Date dt = scheduler.scheduleJob(jobDetail, cronTriggerBean);
+			logger.info("Job with key jobKey : " + jobName + "scheduled successfully for date :" + dt);
+			return true;
+		} catch (SchedulerException e) {
+			logger.error(
+					"SchedulerException while scheduling job with key : " + jobName + " message :" + e.getMessage());
+		}
+
+		return false;
+	}
+
+	/**
+	 * Schedule a job by jobName with seconds interval .
+	 */
+	@Override
+	public boolean scheduleJobInSeconds(String jobName, Class<? extends QuartzJobBean> jobClass, Date date,
+			int repeatInterval) {
+		logger.info("Request received to scheduleJob");
+
+		JobDetail jobDetail = null;
+
+		Boolean exists = isJobExist(jobName);
+		if (exists) {
+			deleteJob(jobName);
+		}
+
+		if (SLIDING_WINDOW_DOCTYPE.equals(jobName)) {
+			jobDetail = JobUtil.createJob(jobClass, false, context, jobName, SLIDING_WINDOW_GROUP_KEY);
+		}
+		logger.info(
+				"creating trigger for key : " + jobName + " at date :" + date + ", repeat interval: " + repeatInterval);
+
+		try {
+			Trigger trigger = TriggerBuilder.newTrigger().withIdentity(SLIDING_WINDOW_DOCTYPE, SLIDING_WINDOW_GROUP_KEY)
+					.startAt(date).withSchedule(SimpleScheduleBuilder.simpleSchedule()
+							.withIntervalInSeconds(repeatInterval).repeatForever())
+					.build();
+
+			Scheduler scheduler = schedulerFactoryBean.getScheduler();
+			Date dt = scheduler.scheduleJob(jobDetail, trigger);
+			logger.info("Job with key jobKey : " + jobName + "scheduled successfully for date :" + dt);
+			return true;
+		} catch (SchedulerException e) {
+			logger.error(
+					"SchedulerException while scheduling job with key : " + jobName + " message :" + e.getMessage());
+		}
+
+		return false;
+	}
+
+	/**
+	 * Schedule a job by jobName at given date.
+	 */
+	@Override
+	public boolean scheduleCronJob(String jobName, Class<? extends QuartzJobBean> jobClass, Date date,
+			String cronExpression) {
+		logger.info("Request received to scheduleJob");
+
+		JobDetail jobDetail = null;
+		Trigger cronTriggerBean = null;
+
+		deleteJob(jobName);
+
+		if (GLOBAL_INSTALL_DOCTYPE.equals(jobName)) {
+			jobDetail = JobUtil.createJob(jobClass, false, context, jobName, GLOBALINSTALL_GROUP_KEY);
+			logger.debug("creating trigger for key : " + jobName + " at date :" + date);
+			cronTriggerBean = JobUtil.createCronTrigger(jobName, GLOBALINSTALL_GROUP_KEY, date, cronExpression,
+					SimpleTrigger.MISFIRE_INSTRUCTION_FIRE_NOW);
+		} else if (WEB_SHOWCASE_DOCTYPE.equals(jobName)) {
+			jobDetail = JobUtil.createJob(jobClass, false, context, jobName, WEBSHOWCASE_GROUP_KEY);
+			logger.debug("creating trigger for key : " + jobName + " at date :" + date);
+			cronTriggerBean = JobUtil.createCronTrigger(jobName, WEBSHOWCASE_GROUP_KEY, date, cronExpression,
+					SimpleTrigger.MISFIRE_INSTRUCTION_FIRE_NOW);
+		} else if (SLIDING_WINDOW_DOCTYPE.equals(jobName)) {
+			jobDetail = JobUtil.createJob(jobClass, false, context, jobName, SLIDING_WINDOW_GROUP_KEY);
+			logger.debug("creating trigger for key : " + jobName + " at date :" + date);
+			cronTriggerBean = JobUtil.createCronTrigger(jobName, SLIDING_WINDOW_GROUP_KEY, date, cronExpression,
+					SimpleTrigger.MISFIRE_INSTRUCTION_FIRE_NOW);
+		} else if (PCG_PROCESS_DOCTYPE.equals(jobName)) {
+			jobDetail = JobUtil.createJob(jobClass, false, context, jobName, PCG_PROCESS_GROUP_KEY);
+			logger.debug("creating trigger for key : " + jobName + " at date :" + date);
+			cronTriggerBean = JobUtil.createCronTrigger(jobName, PCG_PROCESS_GROUP_KEY, date, cronExpression,
+					SimpleTrigger.MISFIRE_INSTRUCTION_FIRE_NOW);
+		}
+
+		else if (MIDNIGHT_TASK_DOCTYPE.equals(jobName)) {
+			jobDetail = JobUtil.createJob(jobClass, false, context, jobName, MIDNIGHT_TASK_GROUP_KEY);
+			logger.debug("creating trigger for key : " + jobName + " at date :" + date);
+			cronTriggerBean = JobUtil.createCronTrigger(jobName, MIDNIGHT_TASK_GROUP_KEY, date, cronExpression,
+					SimpleTrigger.MISFIRE_INSTRUCTION_FIRE_NOW);
+		}
+
+		else if (RETRY_TASK_DOCTYPE.equals(jobName)) {
+			jobDetail = JobUtil.createJob(jobClass, false, context, jobName, RETRY_TASK_GROUP_KEY);
+			logger.debug("creating trigger for key : " + jobName + " at date :" + date);
+			cronTriggerBean = JobUtil.createCronTrigger(jobName, RETRY_TASK_GROUP_KEY, date, cronExpression,
+					SimpleTrigger.MISFIRE_INSTRUCTION_FIRE_NOW);
+		}
+
+		else if (NPVR_QUOTA_CHECK_TASK_DOCTYPE.equals(jobName)) {
+			jobDetail = JobUtil.createJob(jobClass, false, context, jobName, NPVR_QUOTA_CHECK_TASK_GROUP_KEY);
+			logger.debug("creating trigger for key : " + jobName + " at date :" + date);
+			cronTriggerBean = JobUtil.createCronTrigger(jobName, NPVR_QUOTA_CHECK_TASK_GROUP_KEY, date, cronExpression,
+					SimpleTrigger.MISFIRE_INSTRUCTION_FIRE_NOW);
+		}
+
+		else if (MESSAGE_BROKER.equals(jobName)) {
+			jobDetail = JobUtil.createJob(jobClass, false, context, jobName, MESSAGEBROKER_GROUP_KEY);
+			logger.debug("creating trigger for key : " + jobName + " at date :" + date);
+			cronTriggerBean = JobUtil.createCronTrigger(jobName, MESSAGEBROKER_GROUP_KEY, date, cronExpression,
+					SimpleTrigger.MISFIRE_INSTRUCTION_FIRE_NOW);
+		} else if (DELTA_EPG_CLEANUP_PROCESS_JOB.equals(jobName)) {
+			jobDetail = JobUtil.createJob(jobClass, false, context, jobName, DELTA_EPG_GROUP_KEY);
+			logger.debug("creating trigger for key : " + jobName + " at date :" + date);
+			cronTriggerBean = JobUtil.createCronTrigger(jobName, DELTA_EPG_GROUP_KEY, date, cronExpression,
+					SimpleTrigger.MISFIRE_INSTRUCTION_FIRE_NOW);
+		} else if (CLEAN_DEVICES_PROCESS_JOB.equals(jobName)) {
+			jobDetail = JobUtil.createJob(jobClass, false, context, jobName, CLEAN_DEVICES_GROUP_KEY);
+			logger.debug("creating trigger for key : " + jobName + " at date :" + date);
+			cronTriggerBean = JobUtil.createCronTrigger(jobName, CLEAN_DEVICES_GROUP_KEY, date, cronExpression,
+					SimpleTrigger.MISFIRE_INSTRUCTION_FIRE_NOW);
+		} else if (jobClass.getName().contains(BILLING_EXPORT_JOB)) {
+			jobDetail = JobUtil.createJob(jobClass, false, context, jobName, BILLING_EXPORT_GROUP_KEY);
+			logger.debug("creating trigger for key : " + jobName + " at date :" + date);
+			cronTriggerBean = JobUtil.createCronTrigger(jobName, BILLING_EXPORT_GROUP_KEY, date, cronExpression,
+					SimpleTrigger.MISFIRE_INSTRUCTION_FIRE_NOW);
+		} else if (DYNAMIC_CATEGORY_RULE_DOCTYPE.equals(jobName)) {
+			jobDetail = JobUtil.createJob(jobClass, false, context, jobName, DYNAMIC_CATEGORY_RULE_GROUP_KEY);
+			logger.debug("creating trigger for key : " + jobName + " at date :" + date);
+			cronTriggerBean = JobUtil.createCronTrigger(jobName, DYNAMIC_CATEGORY_RULE_GROUP_KEY, date, cronExpression,
+					SimpleTrigger.MISFIRE_INSTRUCTION_FIRE_NOW);
+		} else if (DAILY_MASS_UPDATE_JOB.equals(jobName)) {
+			jobDetail = JobUtil.createJob(jobClass, false, context, jobName, DAILY_MASS_GROUP_KEY);
+			logger.debug("creating trigger for key : " + jobName + " at date :" + date);
+			cronTriggerBean = JobUtil.createCronTrigger(jobName, DAILY_MASS_GROUP_KEY, date, cronExpression,
+					SimpleTrigger.MISFIRE_INSTRUCTION_FIRE_NOW);
+		}  else if (QOE_CONFIG_FILE_DISTRIBUTION_JOB.equals(jobName)) {
+			jobDetail = JobUtil.createJob(jobClass, false, context, jobName, QOE_CONFIG_FILE_DISTRIBUTION_JOB_GROUP_KEY);
+			logger.debug("creating trigger for key : " + jobName + " at date :" + date);
+			cronTriggerBean = JobUtil.createCronTrigger(jobName,QOE_CONFIG_FILE_DISTRIBUTION_JOB_GROUP_KEY, date, cronExpression,
+					SimpleTrigger.MISFIRE_INSTRUCTION_FIRE_NOW);
+		}
+		try {
+			Scheduler scheduler = schedulerFactoryBean.getScheduler();
+			Date dt = scheduler.scheduleJob(jobDetail, cronTriggerBean);
+			logger.debug("Job with key jobKey : " + jobName + " scheduled successfully at date :" + date);
+			return true;
+		} catch (SchedulerException e) {
+			logger.error(
+					"SchedulerException while scheduling job with key : " + jobName + " message :" + e.getMessage());
+		}
+
+		return false;
+	}
+
+	/**
+	 * Update one time scheduled job.
+	 */
+	@Override
+	public boolean updateOneTimeJob(String jobName, Date date) {
+		logger.info("Request received for updating one time job.");
+
+		logger.info("Parameters received for updating one time job : jobKey : " + jobName + ", date: " + date);
+		try {
+			Trigger newTrigger = JobUtil.createSingleTrigger(jobName, date, SimpleTrigger.MISFIRE_INSTRUCTION_FIRE_NOW);
+
+			Date dt = schedulerFactoryBean.getScheduler().rescheduleJob(TriggerKey.triggerKey(jobName), newTrigger);
+			logger.debug("Trigger associated with jobKey : " + jobName + " rescheduled successfully for date :" + dt);
+			return true;
+		} catch (Exception e) {
+			logger.error("SchedulerException while updating one time job with key : " + jobName + " message :"
+					+ e.getMessage());
+			return false;
+		}
+	}
+
+	/**
+	 * Update scheduled cron job.
+	 */
+	@Override
+	public boolean updateCronJob(String jobName, Date date, String cronExpression) {
+		logger.info("Request received for updating cron job.");
+
+		logger.info("Parameters received for updating cron job : jobKey : " + jobName + ", date: " + date);
+		try {
+			// Trigger newTrigger = JobUtil.createSingleTrigger(jobKey, date,
+			// SimpleTrigger.MISFIRE_INSTRUCTION_RESCHEDULE_NEXT_WITH_REMAINING_COUNT);
+			Trigger newTrigger = JobUtil.createCronTrigger(jobName, GLOBAL_INSTALL_DOCTYPE, date, cronExpression,
+					SimpleTrigger.MISFIRE_INSTRUCTION_FIRE_NOW);
+
+			Date dt = schedulerFactoryBean.getScheduler().rescheduleJob(TriggerKey.triggerKey(jobName), newTrigger);
+			logger.debug("Trigger associated with jobKey : " + jobName + " rescheduled successfully for date :" + dt);
+			return true;
+		} catch (Exception e) {
+			logger.error(
+					"SchedulerException while updating cron job with key : " + jobName + " message :" + e.getMessage());
+			return false;
+		}
+	}
+
+	/**
+	 * Remove the indicated Trigger from the scheduler. If the related job does
+	 * not have any other triggers, and the job is not durable, then the job
+	 * will also be deleted.
+	 */
+	@Override
+	public boolean unScheduleJob(String jobName) {
+		logger.info("Request received for Unscheduleding job.");
+
+		TriggerKey tkey = new TriggerKey(jobName);
+		logger.debug("Parameters received for unscheduling job : tkey : " + jobName);
+		try {
+			boolean status = schedulerFactoryBean.getScheduler().unscheduleJob(tkey);
+			logger.debug("Trigger associated with jobKey : " + jobName + " unscheduled with status :" + status);
+			return status;
+		} catch (SchedulerException e) {
+			logger.error(
+					"SchedulerException while unscheduling job with key : " + jobName + " message :" + e.getMessage());
+			return false;
+		}
+	}
+
+	/**
+	 * Delete the identified Job from the Scheduler - and any associated
+	 * Triggers.
+	 */
+	@Override
+	public boolean deleteJob(String jobName) {
+
+		try {
+			if (isJobExist(jobName)) {
+				logger.info("Request received for deleting job.");
+
+				JobKey jobKey = null;
+				TriggerKey triggerKey = null;
+				if (GLOBAL_INSTALL_DOCTYPE.equals(jobName)) {
+					jobKey = new JobKey(jobName, GLOBALINSTALL_GROUP_KEY);
+					triggerKey = new TriggerKey(jobName, GLOBALINSTALL_GROUP_KEY);
+				} else if (WEB_SHOWCASE_DOCTYPE.equals(jobName)) {
+					jobKey = new JobKey(jobName, WEBSHOWCASE_GROUP_KEY);
+					triggerKey = new TriggerKey(jobName, WEBSHOWCASE_GROUP_KEY);
+				} else if (SLIDING_WINDOW_DOCTYPE.equals(jobName)) {
+					jobKey = new JobKey(jobName, SLIDING_WINDOW_GROUP_KEY);
+					triggerKey = new TriggerKey(jobName, SLIDING_WINDOW_GROUP_KEY);
+				} else if (SLIDING_WINDOW_REC_MINS_JOB.equals(jobName)) {
+					jobKey = new JobKey(jobName, SLIDING_WINDOW_GROUP_KEY);
+					triggerKey = new TriggerKey(jobName, SLIDING_WINDOW_GROUP_KEY);
+				} else if (MESSAGE_BROKER.equals(jobName)) {
+					jobKey = new JobKey(jobName, MESSAGEBROKER_GROUP_KEY);
+					triggerKey = new TriggerKey(jobName, MESSAGEBROKER_GROUP_KEY);
+				} else if (RETRY_TASK_DOCTYPE.equals(jobName)) {
+					jobKey = new JobKey(jobName, RETRY_TASK_GROUP_KEY);
+					triggerKey = new TriggerKey(jobName, RETRY_TASK_GROUP_KEY);
+				} else if (MIDNIGHT_TASK_DOCTYPE.equals(jobName)) {
+					jobKey = new JobKey(jobName, MIDNIGHT_TASK_GROUP_KEY);
+					triggerKey = new TriggerKey(jobName, MIDNIGHT_TASK_GROUP_KEY);
+				} else if (NPVR_QUOTA_CHECK_TASK_DOCTYPE.equals(jobName)) {
+					jobKey = new JobKey(jobName, NPVR_QUOTA_CHECK_TASK_GROUP_KEY);
+					triggerKey = new TriggerKey(jobName, NPVR_QUOTA_CHECK_TASK_GROUP_KEY);
+				} else if (PCG_PROCESS_DOCTYPE.equals(jobName)) {
+					jobKey = new JobKey(jobName, PCG_PROCESS_GROUP_KEY);
+					triggerKey = new TriggerKey(jobName, PCG_PROCESS_GROUP_KEY);
+				} else if (DELTA_EPG_CLEANUP_PROCESS_JOB.equals(jobName)) {
+					jobKey = new JobKey(jobName, DELTA_EPG_GROUP_KEY);
+					triggerKey = new TriggerKey(jobName, DELTA_EPG_GROUP_KEY);
+				} else if (CLEAN_DEVICES_PROCESS_JOB.equals(jobName)) {
+					jobKey = new JobKey(jobName, CLEAN_DEVICES_GROUP_KEY);
+					triggerKey = new TriggerKey(jobName, CLEAN_DEVICES_GROUP_KEY);
+				} else if (DYNAMIC_CATEGORY_RULE_DOCTYPE.equals(jobName)) {
+					jobKey = new JobKey(jobName, DYNAMIC_CATEGORY_RULE_GROUP_KEY);
+					triggerKey = new TriggerKey(jobName, DYNAMIC_CATEGORY_RULE_GROUP_KEY);
+				} else if (DAILY_MASS_UPDATE_JOB.equals(jobName)) {
+					jobKey = new JobKey(jobName, DAILY_MASS_GROUP_KEY);
+					triggerKey = new TriggerKey(jobName, DAILY_MASS_GROUP_KEY);
+				}  else if (QOE_CONFIG_FILE_DISTRIBUTION_JOB.equals(jobName)) {
+					jobKey = new JobKey(jobName, QOE_CONFIG_FILE_DISTRIBUTION_JOB_GROUP_KEY);
+					triggerKey = new TriggerKey(jobName, QOE_CONFIG_FILE_DISTRIBUTION_JOB_GROUP_KEY);
+				}
+				else {
+					if (schedulerFactoryBean.getScheduler()
+							.checkExists(new JobKey(jobName, BILLING_EXPORT_GROUP_KEY))) {
+						jobKey = new JobKey(jobName, BILLING_EXPORT_GROUP_KEY);
+						triggerKey = new TriggerKey(jobName, BILLING_EXPORT_GROUP_KEY);
+					}
+				}
+				
+				schedulerFactoryBean.getScheduler().pauseTrigger(triggerKey);
+				schedulerFactoryBean.getScheduler().unscheduleJob(triggerKey);
+				schedulerFactoryBean.getScheduler().deleteJob(jobKey);
+				return true;
+			}
+		} catch (SchedulerException e) {
+			logger.error("SchedulerException while deleting job " + e.getMessage());
+		}
+		return false;
+
+	}
+
+	// @Override
+	public boolean isJobExist(String jobName) {
+		boolean isJobExist = false;
+		try {
+			Scheduler scheduler = schedulerFactoryBean.getScheduler();
+			if (GLOBAL_INSTALL_DOCTYPE.equals(jobName)) {
+				if (scheduler.checkExists(new JobKey(jobName, GLOBALINSTALL_GROUP_KEY))) {
+					isJobExist = true;
+					logger.debug(jobName + " job already exists in scheduler.");
+				} else {
+					logger.debug(jobName + " job does not exists in scheduler. Continue to schedule the job....");
+				}
+			} else if (WEB_SHOWCASE_DOCTYPE.equals(jobName)) {
+				if (scheduler.checkExists(new JobKey(jobName, WEBSHOWCASE_GROUP_KEY))) {
+					isJobExist = true;
+					logger.debug(jobName + " job already exists in scheduler.");
+				} else {
+					logger.debug(jobName + " job does not exist in scheduler. Continue to schedule the job....");
+				}
+			} else if (SLIDING_WINDOW_DOCTYPE.equals(jobName)) {
+				if (scheduler.checkExists(new JobKey(jobName, SLIDING_WINDOW_GROUP_KEY))) {
+					isJobExist = true;
+					logger.debug(jobName + " job already exists in scheduler.");
+				} else {
+					logger.debug(jobName + " job does not exist in scheduler. Continue to schedule the job....");
+				}
+			} else if (SLIDING_WINDOW_REC_MINS_JOB.equals(jobName)) {
+				if (scheduler.checkExists(new JobKey(jobName, SLIDING_WINDOW_GROUP_KEY))) {
+					isJobExist = true;
+					logger.debug(jobName + " job already exists in scheduler.");
+				} else {
+					logger.debug(jobName + " job does not exist in scheduler. Continue to schedule the job....");
+				}
+			} else if (MESSAGE_BROKER.equals(jobName)) {
+				if (scheduler.checkExists(new JobKey(jobName, MESSAGEBROKER_GROUP_KEY))) {
+					isJobExist = true;
+					logger.debug(jobName + " job already exists in scheduler.");
+				} else {
+					logger.debug(jobName + " job does not exist in scheduler. Continue to schedule the job....");
+				}
+			} else if (RETRY_TASK_DOCTYPE.equals(jobName)) {
+				if (scheduler.checkExists(new JobKey(jobName, RETRY_TASK_GROUP_KEY))) {
+					isJobExist = true;
+					logger.debug(jobName + " job already exists in scheduler.");
+				} else {
+					logger.debug(jobName + " job does not exist in scheduler. Continue to schedule the job....");
+				}
+			} else if (MIDNIGHT_TASK_DOCTYPE.equals(jobName)) {
+				if (scheduler.checkExists(new JobKey(jobName, MIDNIGHT_TASK_GROUP_KEY))) {
+					isJobExist = true;
+					logger.debug(jobName + " job already exists in scheduler.");
+				} else {
+					logger.debug(jobName + " job does not exist in scheduler. Continue to schedule the job....");
+				}
+			} else if (NPVR_QUOTA_CHECK_TASK_DOCTYPE.equals(jobName)) {
+				if (scheduler.checkExists(new JobKey(jobName, NPVR_QUOTA_CHECK_TASK_GROUP_KEY))) {
+					isJobExist = true;
+					logger.debug(jobName + " job already exists in scheduler.");
+				} else {
+					logger.debug(jobName + " job does not exist in scheduler. Continue to schedule the job....");
+				}
+			} else if (PCG_PROCESS_DOCTYPE.equals(jobName)) {
+				if (scheduler.checkExists(new JobKey(jobName, PCG_PROCESS_GROUP_KEY))) {
+					isJobExist = true;
+					logger.debug(jobName + " job already exists in scheduler.");
+				} else {
+					logger.debug(jobName + " job does not exist in scheduler. Continue to schedule the job....");
+				}
+			} else if (DELTA_EPG_CLEANUP_PROCESS_JOB.equals(jobName)) {
+				if (scheduler.checkExists(new JobKey(jobName, DELTA_EPG_GROUP_KEY))) {
+					isJobExist = true;
+					logger.debug(jobName + " job already exists in scheduler.");
+				} else {
+					logger.debug(jobName + " job does not exist in scheduler. Continue to schedule the job....");
+				}
+			} else if (CLEAN_DEVICES_PROCESS_JOB.equals(jobName)) {
+				if (scheduler.checkExists(new JobKey(jobName, CLEAN_DEVICES_GROUP_KEY))) {
+					isJobExist = true;
+					logger.debug(jobName + " job already exists in scheduler.");
+				} else {
+					logger.debug(jobName + " job does not exist in scheduler. Continue to schedule the job....");
+				}
+			} else if (DYNAMIC_CATEGORY_RULE_DOCTYPE.equals(jobName)) {
+				if (scheduler.checkExists(new JobKey(jobName, DYNAMIC_CATEGORY_RULE_GROUP_KEY))) {
+					isJobExist = true;
+					logger.debug(jobName + " job already exists in scheduler.");
+				} else {
+					logger.debug(jobName + " job does not exist in scheduler. Continue to schedule the job....");
+				}
+			}else if (DAILY_MASS_UPDATE_JOB.equals(jobName)) {
+				if (scheduler.checkExists(new JobKey(jobName, DAILY_MASS_GROUP_KEY))) {
+					isJobExist = true;
+					logger.debug(jobName + " job already exists in scheduler.");
+				} else {
+					logger.debug(jobName + " job does not exist in scheduler. Continue to schedule the job....");
+				}
+			}  else if (QOE_CONFIG_FILE_DISTRIBUTION_JOB.equals(jobName)) {
+				if (scheduler.checkExists(new JobKey(jobName, QOE_CONFIG_FILE_DISTRIBUTION_JOB_GROUP_KEY))) {
+					isJobExist = true;
+					logger.debug(jobName + " job already exists in scheduler.");
+				} else {
+					logger.debug(jobName + " job does not exist in scheduler. Continue to schedule the job....");
+				}
+			}   
+			   
+			else {
+					if (scheduler.checkExists(new JobKey(jobName, BILLING_EXPORT_GROUP_KEY))) {
+						isJobExist = true;
+						logger.debug(jobName + " job already exists in scheduler.");
+					} else {
+						logger.debug(jobName + " job does not exist in scheduler. Continue to schedule the job....");
+					}
+				}
+
+		} catch (SchedulerException e) {
+			logger.error(
+					"SchedulerException while checking job exist with given name and group exist:" + e.getMessage());
+		}
+		return isJobExist;
+	}
+
+	/**
+	 * Pause a job
+	 */
+	@Override
+	public boolean pauseJob(String jobName) {
+		logger.info("Request received for pausing job.");
+
+		JobKey jKey = null;
+		if (GLOBAL_INSTALL_DOCTYPE.equals(jobName)) {
+			jKey = new JobKey(jobName, GLOBALINSTALL_GROUP_KEY);
+			logger.debug("Parameters received for pausing job : jobKey : " + jobName + ", groupKey :"
+					+ GLOBALINSTALL_GROUP_KEY);
+		} else if (WEB_SHOWCASE_DOCTYPE.equals(jobName)) {
+			jKey = new JobKey(jobName, WEBSHOWCASE_GROUP_KEY);
+			logger.debug("Parameters received for pausing job : jobKey : " + jobName + ", groupKey :"
+					+ WEBSHOWCASE_GROUP_KEY);
+		} else if (SLIDING_WINDOW_DOCTYPE.equals(jobName)) {
+			jKey = new JobKey(jobName, SLIDING_WINDOW_GROUP_KEY);
+			logger.debug("Parameters received for pausing job : jobKey : " + jobName + ", groupKey :"
+					+ SLIDING_WINDOW_GROUP_KEY);
+		} else if (MESSAGE_BROKER.equals(jobName)) {
+			jKey = new JobKey(jobName, MESSAGEBROKER_GROUP_KEY);
+			logger.debug("Parameters received for pausing job : jobKey : " + jobName + ", groupKey :"
+					+ MESSAGEBROKER_GROUP_KEY);
+		} else if (DYNAMIC_CATEGORY_RULE_DOCTYPE.equals(jobName)) {
+			jKey = new JobKey(jobName, DYNAMIC_CATEGORY_RULE_GROUP_KEY);
+			logger.debug("Parameters received for pausing job : jobKey : " + jobName + ", groupKey :"
+					+ DYNAMIC_CATEGORY_RULE_GROUP_KEY);
+		} 
+		try {
+			schedulerFactoryBean.getScheduler().pauseJob(jKey);
+			logger.debug("Job with jobKey :" + jobName + " paused succesfully.");
+			return true;
+		} catch (SchedulerException e) {
+			logger.error("SchedulerException while pausing job with key : " + jobName + " message :" + e.getMessage());
+			return false;
+		}
+	}
+
+	/**
+	 * Resume paused job
+	 */
+	@Override
+	public boolean resumeJob(String jobName) {
+		logger.info("Request received for resuming job.");
+
+		JobKey jKey = null;
+		if (GLOBAL_INSTALL_DOCTYPE.equals(jobName)) {
+			jKey = new JobKey(jobName, GLOBALINSTALL_GROUP_KEY);
+			logger.debug("Parameters received for resuming job : jobKey : " + jobName);
+		} else if (WEB_SHOWCASE_DOCTYPE.equals(jobName)) {
+			jKey = new JobKey(jobName, WEBSHOWCASE_GROUP_KEY);
+			logger.debug("Parameters received for resuming job : jobKey : " + jobName);
+		} else if (SLIDING_WINDOW_DOCTYPE.equals(jobName)) {
+			jKey = new JobKey(jobName, SLIDING_WINDOW_GROUP_KEY);
+			logger.debug("Parameters received for resuming job : jobKey : " + jobName);
+		} else if (MESSAGE_BROKER.equals(jobName)) {
+			jKey = new JobKey(jobName, MESSAGEBROKER_GROUP_KEY);
+			logger.debug("Parameters received for resuming job : jobKey : " + jobName);
+		} else if (DYNAMIC_CATEGORY_RULE_DOCTYPE.equals(jobName)) {
+			jKey = new JobKey(jobName, DYNAMIC_CATEGORY_RULE_GROUP_KEY);
+			logger.debug("Parameters received for resuming job : jobKey : " + jobName);
+		}
+		try {
+			schedulerFactoryBean.getScheduler().resumeJob(jKey);
+			logger.debug("Job with jobKey :" + jobName + " resumed succesfully.");
+			return true;
+		} catch (SchedulerException e) {
+			logger.error("SchedulerException while resuming job with key : " + jobName + " message :" + e.getMessage());
+			return false;
+		}
+	}
+
+	/**
+	 * Start a job now
+	 */
+	@Override
+	public boolean startJobNow(String jobName) {
+		logger.info("Request received for starting job now.");
+
+		JobKey jKey = null;
+		if (GLOBAL_INSTALL_DOCTYPE.equals(jobName)) {
+			jKey = new JobKey(jobName, GLOBALINSTALL_GROUP_KEY);
+			logger.debug("Parameters received for starting job now : jobKey : " + jobName);
+		} else if (WEB_SHOWCASE_DOCTYPE.equals(jobName)) {
+			jKey = new JobKey(jobName, WEBSHOWCASE_GROUP_KEY);
+			logger.debug("Parameters received for starting job now : jobKey : " + jobName);
+		} else if (SLIDING_WINDOW_DOCTYPE.equals(jobName)) {
+			jKey = new JobKey(jobName, SLIDING_WINDOW_GROUP_KEY);
+			logger.debug("Parameters received for starting job now : jobKey : " + jobName);
+		} else if (MESSAGE_BROKER.equals(jobName)) {
+			jKey = new JobKey(jobName, MESSAGEBROKER_GROUP_KEY);
+			logger.debug("Parameters received for starting job now : jobKey : " + jobName);
+		} else if (DYNAMIC_CATEGORY_RULE_DOCTYPE.equals(jobName)) {
+			jKey = new JobKey(jobName, DYNAMIC_CATEGORY_RULE_GROUP_KEY);
+			logger.debug("Parameters received for resuming job : jobKey : " + jobName);
+		}
+		try {
+			schedulerFactoryBean.getScheduler().triggerJob(jKey);
+			logger.debug("Job with jobKey :" + jobName + " started now succesfully.");
+			return true;
+		} catch (SchedulerException e) {
+			logger.error(
+					"SchedulerException while starting job now with key : " + jobName + " message :" + e.getMessage());
+			return false;
+		}
+	}
+
+	/**
+	 * Check if job is already running
+	 */
+	@Override
+	public boolean isJobRunning(String jobName) {
+		logger.info("Request received to check if job is running");
+		logger.info("Parameters received for checking job is running now : jobKey : " + jobName);
+		try {
+
+			List<JobExecutionContext> currentJobs = schedulerFactoryBean.getScheduler().getCurrentlyExecutingJobs();
+			if (currentJobs != null) {
+				for (JobExecutionContext jobCtx : currentJobs) {
+					String jobNameDB = jobCtx.getJobDetail().getKey().getName();
+					String groupNameDB = jobCtx.getJobDetail().getKey().getGroup();
+
+					if (jobName.equalsIgnoreCase(jobNameDB) && WEBSHOWCASE_GROUP_KEY.equalsIgnoreCase(groupNameDB)) {
+						return true;
+					} else if (jobName.equalsIgnoreCase(jobNameDB)
+							&& GLOBALINSTALL_GROUP_KEY.equalsIgnoreCase(groupNameDB)) {
+						return true;
+					} else if (jobName.equalsIgnoreCase(jobNameDB)
+							&& MESSAGEBROKER_GROUP_KEY.equalsIgnoreCase(groupNameDB)) {
+						return true;
+					} else if (jobName.equalsIgnoreCase(jobNameDB)
+							&& DYNAMIC_CATEGORY_RULE_GROUP_KEY.equalsIgnoreCase(groupNameDB)) {
+						return true;
+					} 
+					
+					
+				}
+			}
+		} catch (SchedulerException e) {
+			logger.error("SchedulerException while checking job with key : " + jobName + " is running. error message :"
+					+ e.getMessage());
+			return false;
+		}
+		return false;
+	}
+
+	/**
+	 * Get all jobs
+	 */
+	@Override
+	public List<Map<String, Object>> getAllJobs() {
+		List<Map<String, Object>> list = new ArrayList<Map<String, Object>>();
+		try {
+			Scheduler scheduler = schedulerFactoryBean.getScheduler();
+
+			for (String groupName : scheduler.getJobGroupNames()) {
+				for (JobKey jobKey : scheduler.getJobKeys(GroupMatcher.jobGroupEquals(groupName))) {
+
+					String jobName = jobKey.getName();
+					String jobGroup = jobKey.getGroup();
+
+					// get job's trigger
+					List<Trigger> triggers = (List<Trigger>) scheduler.getTriggersOfJob(jobKey);
+					Date scheduleTime = triggers.get(0).getStartTime();
+					Date nextFireTime = triggers.get(0).getNextFireTime();
+					Date lastFiredTime = triggers.get(0).getPreviousFireTime();
+
+					Map<String, Object> map = new HashMap<String, Object>();
+					map.put("jobName", jobName);
+					map.put("groupName", jobGroup);
+					map.put("scheduleTime", scheduleTime);
+					map.put("lastFiredTime", lastFiredTime);
+					map.put("nextFireTime", nextFireTime);
+
+					if (isJobRunning(jobName)) {
+						map.put("jobStatus", "RUNNING");
+					} else {
+						String jobState = getJobState(jobName);
+						map.put("jobStatus", jobState);
+					}
+
+					list.add(map);
+					logger.debug("Job details:");
+					logger.debug(
+							"Job Name:" + jobName + ", Group Name:" + groupName + ", Schedule Time:" + scheduleTime);
+				}
+
+			}
+		} catch (SchedulerException e) {
+			logger.error("SchedulerException while fetching all jobs. error message :" + e.getMessage());
+		}
+		return list;
+	}
+
+	/**
+	 * Check job exist with given name
+	 */
+	@Override
+	public boolean isJobWithNamePresent(String jobName) {
+		try {
+			JobKey jobKey = null;
+			if (GLOBAL_INSTALL_DOCTYPE.equals(jobName)) {
+				jobKey = new JobKey(jobName, GLOBALINSTALL_GROUP_KEY);
+			} else if (WEB_SHOWCASE_DOCTYPE.equals(jobName)) {
+				jobKey = new JobKey(jobName, WEBSHOWCASE_GROUP_KEY);
+			} else if (SLIDING_WINDOW_DOCTYPE.equals(jobName)) {
+				jobKey = new JobKey(jobName, SLIDING_WINDOW_GROUP_KEY);
+			} else if (MESSAGE_BROKER.equals(jobName)) {
+				jobKey = new JobKey(jobName, MESSAGEBROKER_GROUP_KEY);
+			} else if (DYNAMIC_CATEGORY_RULE_DOCTYPE.equals(jobName)) {
+				jobKey = new JobKey(jobName, DYNAMIC_CATEGORY_RULE_GROUP_KEY);
+			}
+			Scheduler scheduler = schedulerFactoryBean.getScheduler();
+			if (scheduler.checkExists(jobKey)) {
+				return true;
+			}
+		} catch (SchedulerException e) {
+			logger.debug("SchedulerException while checking job with name and group exist: " + e.getMessage());
+		}
+		return false;
+	}
+
+	/**
+	 * Get the current state of job
+	 */
+	public String getJobState(String jobName) {
+		logger.info("JobServiceImpl.getJobState()");
+
+		try {
+			JobKey jobKey = null;
+			if (GLOBAL_INSTALL_DOCTYPE.equals(jobName)) {
+				jobKey = new JobKey(jobName, GLOBALINSTALL_GROUP_KEY);
+			} else if (WEB_SHOWCASE_DOCTYPE.equals(jobName)) {
+				jobKey = new JobKey(jobName, WEBSHOWCASE_GROUP_KEY);
+			} else if (SLIDING_WINDOW_DOCTYPE.equals(jobName)) {
+				jobKey = new JobKey(jobName, SLIDING_WINDOW_GROUP_KEY);
+			} else if (MESSAGE_BROKER.equals(jobName)) {
+				jobKey = new JobKey(jobName, MESSAGEBROKER_GROUP_KEY);
+			} else if (DYNAMIC_CATEGORY_RULE_DOCTYPE.equals(jobName)) {
+				jobKey = new JobKey(jobName, DYNAMIC_CATEGORY_RULE_GROUP_KEY);
+			}
+			Scheduler scheduler = schedulerFactoryBean.getScheduler();
+			JobDetail jobDetail = scheduler.getJobDetail(jobKey);
+
+			List<? extends Trigger> triggers = scheduler.getTriggersOfJob(jobDetail.getKey());
+			if (triggers != null && triggers.size() > 0) {
+				for (Trigger trigger : triggers) {
+					TriggerState triggerState = scheduler.getTriggerState(trigger.getKey());
+
+					if (TriggerState.PAUSED.equals(triggerState)) {
+						return "PAUSED";
+					} else if (TriggerState.BLOCKED.equals(triggerState)) {
+						return "BLOCKED";
+					} else if (TriggerState.COMPLETE.equals(triggerState)) {
+						return "COMPLETE";
+					} else if (TriggerState.ERROR.equals(triggerState)) {
+						return "ERROR";
+					} else if (TriggerState.NONE.equals(triggerState)) {
+						return "NONE";
+					} else if (TriggerState.NORMAL.equals(triggerState)) {
+						return "SCHEDULED";
+					}
+				}
+			}
+		} catch (SchedulerException e) {
+			logger.error("SchedulerException while checking job with name and group exist:" + e.getMessage());
+		}
+		return null;
+	}
+
+	/**
+	 * Stop a job
+	 */
+	@Override
+	public boolean stopJob(String jobName) {
+		logger.info("JobServiceImpl.stopJob()");
+		try {
+			Scheduler scheduler = schedulerFactoryBean.getScheduler();
+			JobKey jkey = null;
+			if (GLOBAL_INSTALL_DOCTYPE.equals(jobName)) {
+				jkey = new JobKey(jobName, GLOBALINSTALL_GROUP_KEY);
+			} else if (WEB_SHOWCASE_DOCTYPE.equals(jobName)) {
+				jkey = new JobKey(jobName, WEBSHOWCASE_GROUP_KEY);
+			} else if (SLIDING_WINDOW_DOCTYPE.equals(jobName)) {
+				jkey = new JobKey(jobName, SLIDING_WINDOW_GROUP_KEY);
+			} else if (MESSAGE_BROKER.equals(jobName)) {
+				jkey = new JobKey(jobName, MESSAGEBROKER_GROUP_KEY);
+			} else if (DYNAMIC_CATEGORY_RULE_DOCTYPE.equals(jobName)) {
+				jkey = new JobKey(jobName, DYNAMIC_CATEGORY_RULE_GROUP_KEY);
+			}			
+			
+			return scheduler.interrupt(jkey);
+
+		} catch (SchedulerException e) {
+			logger.debug("SchedulerException while stopping job. error message : " + e.getMessage());
+		}
+		return false;
+	}
+}
