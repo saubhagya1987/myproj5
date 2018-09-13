@@ -1,0 +1,97 @@
+import java.io.IOException;
+import java.util.Properties;
+
+import javax.sql.DataSource;
+
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.beans.factory.annotation.Value;
+import org.springframework.beans.factory.config.PropertiesFactoryBean;
+import org.springframework.context.ApplicationContext;
+import org.springframework.context.annotation.Bean;
+import org.springframework.context.annotation.Configuration;
+import org.springframework.core.io.ClassPathResource;
+import org.springframework.core.io.FileSystemResource;
+import org.springframework.core.io.Resource;
+import org.springframework.scheduling.quartz.SchedulerFactoryBean;
+
+import com.proximus.tv.quartzscheduler.service.JobsListener;
+import com.proximus.tv.quartzscheduler.service.TriggerListner;
+ 
+/**
+ * This class configures quartz scheduler
+ * @author saubhagya.pradhan2
+ *
+ */
+@Configuration
+public class QuartzSchedulerConfig {
+ 
+    /**
+     * DataSource
+     */
+    @Autowired
+    DataSource dataSource;
+ 
+    /**
+     * ApplicationContext
+     */
+    @Autowired
+    private ApplicationContext applicationContext;
+     
+    /**
+     * TriggerListner
+     */
+    @Autowired
+    private TriggerListner triggerListner;
+
+    /**
+     * JobsListener
+     */
+    @Autowired
+    private JobsListener jobsListener;
+    
+	/**
+	 * AutowiringSpringBeanJobFactory
+	 */
+	@Autowired
+	private AutowiringSpringBeanJobFactory jobFactory;
+	
+	@Value("${spring.config.location}")
+	private String configLocation;
+    /**
+     * create scheduler
+     */
+    @Bean
+    public SchedulerFactoryBean TMBackgroundServiceScheduler() throws IOException {
+ 
+        SchedulerFactoryBean factory = new SchedulerFactoryBean();
+        factory.setOverwriteExistingJobs(true);
+        factory.setDataSource(dataSource);
+        factory.setQuartzProperties(quartzProperties());
+        
+        //Register listeners to get notification on Trigger misfire etc
+        factory.setGlobalTriggerListeners(triggerListner);
+        factory.setGlobalJobListeners(jobsListener);
+        
+       // AutowiringSpringBeanJobFactory jobFactory = new AutowiringSpringBeanJobFactory();
+        jobFactory.setApplicationContext(applicationContext);
+        factory.setJobFactory(jobFactory);
+        
+        return factory;
+    }
+ 
+    /**
+     * Configure quartz using properties file
+     */
+    @Bean
+    public Properties quartzProperties() throws IOException {
+        PropertiesFactoryBean propertiesFactoryBean = new PropertiesFactoryBean();        
+        String locationArray[]=configLocation.split("e:");
+        String location=locationArray[1];
+        Resource resource=new FileSystemResource(location+"/tmbackgroundservices.properties");
+        propertiesFactoryBean.setLocations(new ClassPathResource("/quartz.properties"),resource);
+        propertiesFactoryBean.afterPropertiesSet();
+        return propertiesFactoryBean.getObject();
+    }
+ 
+  
+}
